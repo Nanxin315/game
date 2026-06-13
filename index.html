@@ -609,6 +609,63 @@
             border-radius: 4px;
             transition: width 0.15s linear;
         }
+
+        /* 右下道具库存面板 */
+        #inventory-panel {
+            position: absolute;
+            right: clamp(8px, 2vw, 16px);
+            bottom: clamp(60px, 10vh, 100px);
+            background: rgba(0,0,0,0.78);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 14px;
+            padding: 10px 14px;
+            z-index: 55;
+            min-width: 130px;
+            transition: opacity 0.3s;
+        }
+        #inventory-panel.hidden { opacity: 0; pointer-events: none; }
+        .inv-title {
+            color: #ffd700;
+            font-weight: 800;
+            font-size: 0.85rem;
+            text-align: center;
+            margin-bottom: 6px;
+        }
+        .inv-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 8px;
+            margin: 3px 0;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.06);
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+            color: #fff;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .inv-item:hover { background: rgba(255,255,255,0.18); transform: scale(1.03); }
+        .inv-item:active { transform: scale(0.95); }
+        .inv-item .inv-icon { font-size: 1.2em; }
+        .inv-item .inv-count {
+            margin-left: auto;
+            background: var(--yellow);
+            color: #1a1a2e;
+            border-radius: 10px;
+            padding: 1px 8px;
+            font-weight: 800;
+            font-size: 0.78rem;
+        }
+        .inv-item.empty { opacity: 0.4; cursor: default; }
+        .inv-item.empty:hover { background: rgba(255,255,255,0.06); transform: none; }
+
+        /* 库存提示 */
+        .shop-item .item-stock {
+            font-size: 0.72rem;
+            color: #aaa;
+            margin-top: 2px;
+        }
     </style>
 </head>
 <body>
@@ -626,6 +683,7 @@
                 <div class="stat-item">🏆 最高分：<span id="menu-highscore">0</span></div>
                 <div class="stat-item">📏 最远距离：<span id="menu-maxdist">0</span>m</div>
                 <div class="stat-item">💰 累计金币：<span id="menu-totalcoins">0</span></div>
+                <div class="stat-item">🔑 游戏次数：<span id="menu-plays">30</span></div>
             </div>
             <button class="btn btn-play" id="btn-start">🎮 开始游戏</button>
             <div class="menu-actions">
@@ -666,6 +724,7 @@
             <div class="score-text" id="go-score">得分：0</div>
             <div class="score-text" id="go-distance">距离：0m</div>
             <div class="record-text hidden" id="go-record">🎉 新纪录！</div>
+            <button class="btn btn-restart" id="btn-revive-go" style="background:#ff6b6b;color:#fff;">🔑 消耗5把钥匙复活</button>
             <button class="btn btn-restart" id="btn-restart-go">🔄 再来一次</button>
             <button class="btn btn-menu" id="btn-menu-go">🏠 返回主菜单</button>
         </div>
@@ -704,6 +763,12 @@
         <div id="bottom-timer-items"></div>
     </div>
 
+    <!-- 右下道具库存面板 -->
+    <div id="inventory-panel" class="hidden">
+        <div class="inv-title">🎒 道具</div>
+        <div id="inv-items"></div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js">
     </script>
     <script>
@@ -735,6 +800,7 @@
             let policeTimer = 0;
             let sirenCooldown = 0;
             let headStartTimer = 0;
+            let reviveProtectionTimer = 0; // 复活后30秒保护
             let worldItems = [];
             let particles = [];
             let floatTexts = [];
@@ -751,19 +817,36 @@
             let bgMusicBPM = 120;
             let bgMusicNoteIndex = 0;
 
-            // ==================== 持久化数据：商城/角色/统计 ====================
+            // ==================== 持久化数据：库存/商城/角色/统计 ====================
             let totalCoins = parseInt(localStorage.getItem('subwayTotalCoins') || '0');
             let maxDistance = parseInt(localStorage.getItem('subwayMaxDistance') || '0');
-            let shopPurchases = JSON.parse(localStorage.getItem('subwayShop') || '{}');
+            // 道具库存（消耗品）+ 钥匙🔑 + 每日次数
+            let inventory = JSON.parse(localStorage.getItem('subwayInventory') || '{"headStart":0,"skate":0,"magnet":5,"jetpack":0,"keys":0}');
             let charConfig = JSON.parse(localStorage.getItem('subwayChar') || '{"body":"#3388ff","hat":"#dd3333","shoe":"#dd3333"}');
+            // 每日免费次数
+            const DAILY_FREE_PLAYS = 30;
+            let dailyPlaysRemaining = DAILY_FREE_PLAYS;
+            let dailyPlaysDate = localStorage.getItem('subwayPlaysDate') || '';
+            const todayStr = new Date().toISOString().slice(0, 10);
+            if (dailyPlaysDate !== todayStr) {
+                dailyPlaysRemaining = DAILY_FREE_PLAYS;
+                dailyPlaysDate = todayStr;
+                localStorage.setItem('subwayPlaysDate', todayStr);
+                localStorage.setItem('subwayPlaysRemaining', dailyPlaysRemaining);
+            } else {
+                dailyPlaysRemaining = parseInt(localStorage.getItem('subwayPlaysRemaining') || DAILY_FREE_PLAYS);
+            }
 
             const SHOP_ITEMS = [
-                { id: 'headStart', name: '🚀 抢先起步', desc: '每局开局获得2秒加速', cost: 100, icon: '🚀' },
-                { id: 'jetpackUp', name: '⏫ 喷气背包+1s', desc: '喷气背包持续时间延长1秒', cost: 200, icon: '⏫' },
-                { id: 'magnetUp', name: '🧲 磁铁+1s', desc: '磁铁持续时间延长1秒', cost: 150, icon: '🧲' },
+                { id: 'headStart', name: '🚀 抢先起步', desc: '开局获得10秒全局加速', cost: 80, icon: '🚀' },
+                { id: 'skate', name: '🛹 滑板', desc: '25%移速加成，持续8秒', cost: 120, icon: '🛹' },
+                { id: 'magnet', name: '🧲 磁铁', desc: '自动吸附金币，持续5秒', cost: 100, icon: '🧲' },
+                { id: 'jetpack', name: '🚀 喷气背包', desc: '50%移速加成+飞行，持续4秒', cost: 200, icon: '🚀' },
+                { id: 'keys', name: '🔑 钥匙', desc: '1把钥匙=1次游戏次数', cost: 200, icon: '🔑' },
             ];
-            let jetpackBaseDuration = 4;
-            let magnetBaseDuration = 5;
+            // 道具效果激活状态（库存使用后生效）
+            let activeInventoryEffect = null; // { type, timer }
+            const INVENTORY_DURATIONS = { headStart: 10, skate: 8, magnet: 5, jetpack: 4 };
 
             const CHAR_PRESETS = [
                 { id: 'boy', name: '男生', icon: '👦', body: '#3388ff', hat: '#dd3333', shoe: '#dd3333' },
@@ -777,9 +860,21 @@
             function savePersistentData() {
                 localStorage.setItem('subwayTotalCoins', totalCoins);
                 localStorage.setItem('subwayMaxDistance', maxDistance);
-                localStorage.setItem('subwayShop', JSON.stringify(shopPurchases));
+                localStorage.setItem('subwayInventory', JSON.stringify(inventory));
                 localStorage.setItem('subwayChar', JSON.stringify(charConfig));
                 localStorage.setItem('subwayCharPreset', selectedCharPreset);
+                localStorage.setItem('subwayPlaysRemaining', dailyPlaysRemaining);
+                localStorage.setItem('subwayPlaysDate', dailyPlaysDate);
+            }
+
+            function getTotalPlays() {
+                return dailyPlaysRemaining + (inventory.keys || 0);
+            }
+
+            function consumePlay() {
+                if (dailyPlaysRemaining > 0) { dailyPlaysRemaining--; }
+                else if (inventory.keys > 0) { inventory.keys--; }
+                savePersistentData();
             }
 
             function applyCharConfig() {
@@ -793,6 +888,30 @@
                 if (rightShoe && rightShoe.material) rightShoe.material.color.set(c.shoe);
             }
 
+            // 使用库存道具
+            function useInventoryItem(type) {
+                if (gameState !== GAME_STATES.PLAYING) return;
+                if (!inventory[type] || inventory[type] <= 0) return;
+                inventory[type]--;
+                savePersistentData();
+                updateInventoryPanel();
+                // 激活道具效果
+                activeInventoryEffect = { type, timer: INVENTORY_DURATIONS[type] };
+                // 应用对应特效
+                if (type === 'magnet') {
+                    magnetRing.visible = true;
+                } else if (type === 'jetpack') {
+                    jetFlameGroup.visible = true;
+                    if (!isJumping) { isJumping = true; verticalVelocity = 5; playerY = 1.5; }
+                    isCrouching = false;
+                } else if (type === 'skate') {
+                    skateGroup.visible = true;
+                    doubleJumpAvailable = true;
+                }
+                playSound('powerup');
+                spawnFloatText(actualX, playerY + 2, playerGroup.position.z, '使用 ' + SHOP_ITEMS.find(i => i.id === type).name, '#00ff88');
+            }
+
             // ==================== Three.js 初始化 ====================
             const container = document.getElementById('game-container');
             const scene = new THREE.Scene();
@@ -801,11 +920,11 @@
 
             const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer.setSize(container.clientWidth, container.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFShadowMap;  // 性能优先，用PCF替代PCFSoft
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.1;
+            renderer.shadowMap.type = THREE.PCFShadowMap;
+            // 关闭色调映射，减少GPU后处理开销
+            renderer.toneMapping = THREE.NoToneMapping;
             container.appendChild(renderer.domElement);
 
             // 灯光
@@ -814,23 +933,20 @@
             const sunLight = new THREE.DirectionalLight(0xffeedd, 2.5);
             sunLight.position.set(10, 20, 5);
             sunLight.castShadow = true;
-            sunLight.shadow.mapSize.width = 512;
-            sunLight.shadow.mapSize.height = 512;
+            sunLight.shadow.mapSize.width = 256;
+            sunLight.shadow.mapSize.height = 256;
             sunLight.shadow.camera.near = 0.5;
-            sunLight.shadow.camera.far = 80;
-            sunLight.shadow.camera.left = -12;
-            sunLight.shadow.camera.right = 12;
-            sunLight.shadow.camera.top = 12;
-            sunLight.shadow.camera.bottom = -4;
+            sunLight.shadow.camera.far = 40;
+            sunLight.shadow.camera.left = -8;
+            sunLight.shadow.camera.right = 8;
+            sunLight.shadow.camera.top = 8;
+            sunLight.shadow.camera.bottom = -3;
             sunLight.shadow.bias = -0.0001;
             scene.add(sunLight);
 
-            const pointLight1 = new THREE.PointLight(0xff8844, 2, 14);
-            pointLight1.position.set(3, 2.5, 5);
+            const pointLight1 = new THREE.PointLight(0xffcc88, 2.5, 16);
+            pointLight1.position.set(0, 3, 5);
             scene.add(pointLight1);
-            const pointLight2 = new THREE.PointLight(0x4488ff, 2, 14);
-            pointLight2.position.set(-3, 2.5, 5);
-            scene.add(pointLight2);
 
             // 天空渐变
             function createSkyTexture(themeIdx) {
@@ -1261,13 +1377,21 @@
                 const length = endZ - startZ;
                 const midZ = (startZ + endZ) / 2;
                 const colors = getThemeColors(themeIdx);
+                // 计算斜坡高度：采样段内多个点取平均
+                const samples = 10;
+                let avgGroundY = 0;
+                for (let si = 0; si < samples; si++) {
+                    avgGroundY += getGroundHeight(startZ + (endZ - startZ) * si / (samples - 1));
+                }
+                avgGroundY /= samples;
 
-                // 地面 - 碎石路基（提亮以增强与铁轨的对比）
+                // 地面 - 跟随地形高度
+                const groundThickness = 0.15 + avgGroundY;
                 const ground = new THREE.Mesh(
-                    new THREE.BoxGeometry(7, 0.15, length),
-                    new THREE.MeshStandardMaterial({ color: 0x4a4535, roughness: 0.8, metalness: 0.1 })
+                    new THREE.BoxGeometry(7, groundThickness, length),
+                    new THREE.MeshStandardMaterial({ color: avgGroundY > 0.5 ? 0x5a5040 : 0x4a4535, roughness: 0.8, metalness: 0.1 })
                 );
-                ground.position.set(0, -0.075, midZ);
+                ground.position.set(0, -0.075 + avgGroundY / 2, midZ);
                 ground.receiveShadow = true;
                 segment.add(ground);
 
@@ -1279,7 +1403,7 @@
                         new THREE.BoxGeometry(1.0, 0.04, length),
                         new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.9, metalness: 0.05 })
                     );
-                    railBed.position.set(laneX, -0.02, midZ);
+                    railBed.position.set(laneX, -0.02 + avgGroundY, midZ);
                     railBed.receiveShadow = true;
                     segment.add(railBed);
                     // 双钢轨
@@ -1288,7 +1412,7 @@
                             new THREE.BoxGeometry(0.08, 0.06, length),
                             new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.12, metalness: 0.92 })
                         );
-                        rail.position.set(laneX + offset, 0.04, midZ);
+                        rail.position.set(laneX + offset, 0.04 + avgGroundY, midZ);
                         rail.receiveShadow = true;
                         segment.add(rail);
                     });
@@ -1300,7 +1424,7 @@
                         new THREE.BoxGeometry(4.8, 0.05, 0.14),
                         new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.55, metalness: 0.1 })
                     );
-                    sleeper.position.set(0, 0.02, z);
+                    sleeper.position.set(0, 0.02 + avgGroundY, z);
                     sleeper.receiveShadow = true;
                     segment.add(sleeper);
                 }
@@ -1312,7 +1436,7 @@
                         new THREE.MeshStandardMaterial({ color: colors.wall, roughness: 0.5,
                             metalness: 0.2 })
                     );
-                    wall.position.set(x, 1.25, midZ);
+                    wall.position.set(x, 1.25 + avgGroundY, midZ);
                     wall.receiveShadow = true;
                     wall.castShadow = true;
                     segment.add(wall);
@@ -1325,12 +1449,78 @@
                         new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.1,
                             metalness: 0.1, emissive: 0xff0000, emissiveIntensity: 0.7 })
                     );
-                    signalLight.position.set(0, 0.2, z);
+                    signalLight.position.set(0, 0.2 + avgGroundY, z);
                     segment.add(signalLight);
+                }
+
+                // 坡道+火车顶场景：在对应z区间生成梯子/平台
+                const rampCycle = 800;
+                const segStartCycle = ((startZ % rampCycle) + rampCycle) % rampCycle;
+                const segEndCycle = ((endZ % rampCycle) + rampCycle) % rampCycle;
+                // 上坡梯子（600-630区间）
+                if (segStartCycle < 630 && segEndCycle > 600) {
+                    const rStart = Math.max(startZ, Math.floor(startZ / rampCycle) * rampCycle + 600);
+                    const rEnd = Math.min(endZ, Math.floor(startZ / rampCycle) * rampCycle + 630);
+                    const stepCount = 10;
+                    for (let si = 0; si < stepCount; si++) {
+                        const stepZ = rStart + (rEnd - rStart) * si / stepCount;
+                        const stepH = ((stepZ - rStart) / (rEnd - rStart)) * 3.5;
+                        if (stepZ >= startZ && stepZ <= endZ) {
+                            const step = new THREE.Mesh(
+                                new THREE.BoxGeometry(4.0, 0.15, 0.5),
+                                new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.4, metalness: 0.3 })
+                            );
+                            step.position.set(0, stepH, stepZ - midZ);
+                            step.receiveShadow = true; step.castShadow = true;
+                            segment.add(step);
+                        }
+                    }
+                }
+                // 火车顶平台（630-730区间）
+                if ((segStartCycle < 730 && segStartCycle >= 630) || (segEndCycle > 630 && segEndCycle <= 730) ||
+                    (segStartCycle < 630 && segEndCycle > 730)) {
+                    const pStart = Math.max(startZ, Math.floor(startZ / rampCycle) * rampCycle + 630);
+                    const pEnd = Math.min(endZ, Math.floor(startZ / rampCycle) * rampCycle + 730);
+                    if (pEnd > pStart) {
+                        const platLen = pEnd - pStart;
+                        const platMid = (pStart + pEnd) / 2;
+                        // 平台主体
+                        const platform = new THREE.Mesh(
+                            new THREE.BoxGeometry(4.5, 0.3, platLen),
+                            new THREE.MeshStandardMaterial({ color: 0x556677, roughness: 0.3, metalness: 0.5 })
+                        );
+                        platform.position.set(0, 3.5, platMid - midZ);
+                        platform.receiveShadow = true; platform.castShadow = true;
+                        segment.add(platform);
+                        // 平台围栏
+                        [-2.2, 2.2].forEach(fx => {
+                            const fence = new THREE.Mesh(
+                                new THREE.BoxGeometry(0.1, 0.6, platLen),
+                                new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.6 })
+                            );
+                            fence.position.set(fx, 3.8, platMid - midZ);
+                            segment.add(fence);
+                        });
+                    }
                 }
 
                 segment.position.y = 0;
                 return segment;
+            }
+
+            // 坡道+火车顶地面高度查询
+            function getGroundHeight(z) {
+                const rampCycle = 800; // 每800单位一个坡道周期
+                const cycleZ = ((z % rampCycle) + rampCycle) % rampCycle;
+                // 前600单位：平地
+                if (cycleZ < 600) return 0;
+                // 600-630：上坡（从0升到3.5）
+                if (cycleZ < 630) return (cycleZ - 600) / 30 * 3.5;
+                // 630-730：火车顶平台
+                if (cycleZ < 730) return 3.5;
+                // 730-760：下坡回落
+                if (cycleZ < 760) return 3.5 - (cycleZ - 730) / 30 * 3.5;
+                return 0;
             }
 
             function ensureTrackSegments(playerZ) {
@@ -1382,7 +1572,8 @@
             }
 
             // ==================== 世界物品生成 ====================
-            function createCoin(x, z, baseY = 0.55) {
+            function createCoin(x, z, baseY = null) {
+                if (baseY === null) baseY = 0.55 + getGroundHeight(z);
                 const group = new THREE.Group();
                 // 金币主体（扁平圆柱体）
                 const coinBody = new THREE.Mesh(
@@ -1418,10 +1609,11 @@
             // 弧形金币路径（跳跃/喷气时可收集）
             function createCoinArc(laneX, startZ) {
                 const arcCoins = [];
+                const gY = getGroundHeight(startZ);
                 const heights = [0.9, 1.5, 2.1, 1.5, 0.9];
                 const zOffsets = [0, 0.5, 1.0, 1.5, 2.0];
                 for (let i = 0; i < heights.length; i++) {
-                    const coin = createCoin(laneX, startZ + zOffsets[i], heights[i]);
+                    const coin = createCoin(laneX, startZ + zOffsets[i], heights[i] + gY);
                     arcCoins.push(coin);
                 }
                 return arcCoins;
@@ -1459,7 +1651,7 @@
                 roof.position.y = 1.22;
                 roof.castShadow = true;
                 group.add(roof);
-                group.position.set(x, 0, z);
+                group.position.set(x, getGroundHeight(z), z);
                 group.userData = { type: 'highObstacle', x: x, z: z, height: 1.3, width: 1.35, depth: 2.0 };
                 scene.add(group);
                 worldItems.push(group);
@@ -1496,7 +1688,7 @@
                     stripe.position.set(sx, 0.38, 0);
                     group.add(stripe);
                 }
-                group.position.set(x, 0, z);
+                group.position.set(x, getGroundHeight(z), z);
                 group.userData = { type: 'lowObstacle', x: x, z: z, height: 0.5, width: 1.2, depth: 0.55 };
                 scene.add(group);
                 worldItems.push(group);
@@ -1556,7 +1748,7 @@
                 );
                 underframe.position.y = 0.06;
                 group.add(underframe);
-                group.position.set(x, 0, z);
+                group.position.set(x, getGroundHeight(z), z);
                 group.userData = {
                     type: 'train',
                     x: x,
@@ -1598,7 +1790,7 @@
                 const bottomBar = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.06, 0.12), postMat);
                 bottomBar.position.set(0, 0.05, 0);
                 group.add(bottomBar);
-                group.position.set(x, 0, z);
+                group.position.set(x, getGroundHeight(z), z);
                 group.userData = { type: 'hurdle', x: x, z: z, height: 0.95, width: 1.3, depth: 0.25 };
                 scene.add(group);
                 worldItems.push(group);
@@ -1637,7 +1829,7 @@
                 mesh.position.y = 0.45;
                 mesh.castShadow = true;
                 group.add(mesh);
-                group.position.set(x, 0, z);
+                group.position.set(x, getGroundHeight(z), z);
                 group.userData = { type: 'powerup', powerType: powerType, x: x, z: z, baseY: 0.45, floatPhase: Math.random() *
                         Math.PI * 2 };
                 scene.add(group);
@@ -1649,8 +1841,9 @@
                 const minZ = playerZ + 15;
                 const maxZ = playerZ + 28;
                 const z = minZ + Math.random() * (maxZ - minZ);
+                const gY = getGroundHeight(z); // 地形抬高量
                 const lanes = [-1.5, 0, 1.5];
-                const numItems = 1 + Math.floor(Math.random() * 2.5);
+                const numItems = 2 + Math.floor(Math.random() * 3);
 
                 const usedLanes = new Set();
                 for (let i = 0; i < numItems; i++) {
@@ -1660,48 +1853,36 @@
                     usedLanes.add(lane);
 
                     const rand = Math.random();
-                    if (rand < 0.35) {
-                        // 金币（35%），其中约15%概率生成空中弧形金币路径
-                        if (Math.random() < 0.15) {
+                    if (rand < 0.55) {
+                        // 金币（55%），大幅提升密度。其中30%生成弧形金币路径
+                        if (Math.random() < 0.30) {
                             createCoinArc(lane, z);
                         } else {
-                            createCoin(lane, z + (Math.random() - 0.5) * 1.5);
+                            // 生成密集金币串（3-5枚）
+                            const coinCount = 3 + Math.floor(Math.random() * 3);
+                            for (let ci = 0; ci < coinCount; ci++) {
+                                createCoin(lane, z + ci * 0.6 + (Math.random() - 0.5) * 0.3, 0.55);
+                            }
                         }
-                    } else if (rand < 0.52) {
-                        // 列车（17%）——地铁主题核心障碍物
+                    } else if (rand < 0.70) {
+                        // 列车（15%）
                         const hasTop = Math.random() < 0.35;
                         createTrain(lane, z, hasTop);
                         if (hasTop && Math.random() < 0.4 && availableLanes.length > 1) {
                             const otherLanes = lanes.filter(l => l !== lane);
                             const ol = otherLanes[Math.floor(Math.random() * otherLanes.length)];
-                            if (!usedLanes.has(ol)) {
-                                usedLanes.add(ol);
-                                createLowObstacle(ol, z + 1.2);
-                            }
+                            if (!usedLanes.has(ol)) { usedLanes.add(ol); createLowObstacle(ol, z + 1.2); }
                         }
-                    } else if (rand < 0.66) {
-                        // 高障碍物（14%）——彩色车厢
-                        createHighObstacle(lane, z);
                     } else if (rand < 0.80) {
-                        // 低障碍物（14%）——路障
+                        createHighObstacle(lane, z);
+                    } else if (rand < 0.88) {
                         createLowObstacle(lane, z);
-                    } else if (rand < 0.85) {
-                        // 跨栏（5%）——需下蹲通过
+                    } else if (rand < 0.93) {
                         createHurdle(lane, z);
-                    } else if (rand < 0.92) {
-                        // 道具（7%）
-                        const powerTypes = ['magnet', 'doubleScore', 'jetpack', 'skate'];
-                        const pt = powerTypes[Math.floor(Math.random() * powerTypes.length)];
-                        createPowerUp(lane, z, pt);
                     } else {
-                        // 组合障碍序列（8%）
-                        if (Math.random() < 0.5) {
-                            createHighObstacle(lane, z);
-                            createLowObstacle(lane, z + 1.8);
-                        } else {
-                            createLowObstacle(lane, z);
-                            createHighObstacle(lane, z + 1.5);
-                        }
+                        const powerTypes = ['magnet', 'doubleScore', 'jetpack', 'skate'];
+                        const pt2 = powerTypes[Math.floor(Math.random() * powerTypes.length)];
+                        createPowerUp(lane, z, pt2);
                     }
                 }
             }
@@ -1768,12 +1949,10 @@
                 pRightLeg.position.set(0.15, 0.25, 0);
                 pRightLeg.name = 'pRightLeg';
                 group.add(pRightLeg);
-                // 手电筒
-                const flashlight = new THREE.SpotLight(0xffffcc, 4, 14, Math.PI / 8, 0.3, 0.5);
+                // 手电筒（用PointLight替代SpotLight，性能更优）
+                const flashlight = new THREE.PointLight(0xffffcc, 2, 8);
                 flashlight.position.set(0, 0.75, 0.4);
-                flashlight.target.position.set(0, 0.5, 7);
                 group.add(flashlight);
-                group.add(flashlight.target);
                 // 警笛灯（肩部）
                 const redLight = new THREE.PointLight(0xff0000, 3, 4);
                 redLight.position.y = 1.4;
@@ -1785,18 +1964,27 @@
                 group.add(blueLight);
 
                 group.position.set(0, 0, -10);
-                group.userData = { flashlight, redLight, blueLight, pLeftArm, pRightArm, pLeftLeg, pRightLeg };
+                group.userData = { redLight, blueLight, pLeftArm, pRightArm, pLeftLeg, pRightLeg };
                 scene.add(group);
                 return group;
             }
 
             // ==================== 粒子系统 ====================
+            // 预创建粒子几何体（复用，避免每帧创建/销毁）
+            const particleGeom = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+            const particleMatCache = {};
+            function getParticleMat(color) {
+                if (!particleMatCache[color]) {
+                    particleMatCache[color] = new THREE.MeshStandardMaterial({ color, roughness: 0.1, metalness: 0.3,
+                        emissive: color, emissiveIntensity: 0.8, transparent: true });
+                }
+                return particleMatCache[color];
+            }
+
             function spawnParticles(x, y, z, color, count = 8) {
+                const mat = getParticleMat(color);
                 for (let i = 0; i < count; i++) {
-                    const geom = new THREE.BoxGeometry(0.06, 0.06, 0.06);
-                    const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.1, metalness: 0.3,
-                        emissive: color, emissiveIntensity: 0.8 });
-                    const particle = new THREE.Mesh(geom, mat);
+                    const particle = new THREE.Mesh(particleGeom, mat);
                     particle.position.set(x, y, z);
                     particle.userData = {
                         velocity: new THREE.Vector3(
@@ -1818,8 +2006,7 @@
                     p.userData.age += deltaTime;
                     if (p.userData.age >= p.userData.life) {
                         scene.remove(p);
-                        p.geometry.dispose();
-                        p.material.dispose();
+                        // 不复用dispose：几何体/材质为共享实例
                         particles.splice(i, 1);
                     } else {
                         const progress = p.userData.age / p.userData.life;
@@ -1955,7 +2142,7 @@
                     const ud = item.userData;
                     if (ud.type === 'coin') {
                         // 收集金币
-                        const basePoints = 10;
+                        const basePoints = 1;
                         const multiplier = (activePowerUps.doubleScore && activePowerUps.doubleScore > 0) ? 2 : 1;
                         const points = basePoints * multiplier;
                         score += points;
@@ -2044,7 +2231,7 @@
                             // 极近距离自动拾取（防止穿模漏检）
                             if (dist < autoCollectDist) {
                                 item.userData.collected = true;
-                                const basePoints = 10;
+                                const basePoints = 1;
                                 const multiplier = (activePowerUps.doubleScore && activePowerUps.doubleScore > 0) ? 2 : 1;
                                 score += basePoints * multiplier;
                                 spawnParticles(item.position.x, item.position.y, item.position.z, 0xffd700, 3);
@@ -2077,7 +2264,8 @@
             }
 
             function applyPowerUp(type) {
-                const durations = { magnet: magnetBaseDuration, doubleScore: 8, jetpack: jetpackBaseDuration, skate: 9999 };
+                // 游戏内拾取道具：即时激活定时效果
+                const durations = { magnet: 5, doubleScore: 8, jetpack: 4, skate: 8 };
                 activePowerUps[type] = durations[type];
                 if (type === 'skate') {
                     doubleJumpAvailable = true;
@@ -2099,14 +2287,15 @@
             }
 
             function updatePowerUps(deltaTime) {
+                // 处理游戏内拾取的道具（包括8秒滑板）
                 for (const key in activePowerUps) {
-                    if (activePowerUps[key] > 0 && key !== 'skate') {
+                    if (activePowerUps[key] > 0) {
                         activePowerUps[key] -= deltaTime;
                         if (activePowerUps[key] <= 0) {
                             activePowerUps[key] = 0;
-                            // 隐藏对应特效
                             if (key === 'magnet') magnetRing.visible = false;
                             if (key === 'doubleScore') doubleGlow.visible = false;
+                            if (key === 'skate') { skateGroup.visible = false; doubleJumpAvailable = false; }
                             if (key === 'jetpack') {
                                 jetFlameGroup.visible = false;
                                 if (playerY > 0.05) { verticalVelocity = -3; }
@@ -2114,26 +2303,42 @@
                         }
                     }
                 }
-                if (activePowerUps.jetpack && activePowerUps.jetpack > 0) {
+                // 处理库存道具效果计时
+                if (activeInventoryEffect) {
+                    activeInventoryEffect.timer -= deltaTime;
+                    if (activeInventoryEffect.timer <= 0) {
+                        // 库存道具效果结束
+                        const t = activeInventoryEffect.type;
+                        if (t === 'magnet') magnetRing.visible = false;
+                        if (t === 'jetpack') { jetFlameGroup.visible = false; if (playerY > 0.05) verticalVelocity = -3; }
+                        if (t === 'skate') { skateGroup.visible = false; doubleJumpAvailable = false; }
+                        activeInventoryEffect = null;
+                    }
+                }
+                // 喷气飞行
+                const jetActive = (activePowerUps.jetpack && activePowerUps.jetpack > 0) ||
+                    (activeInventoryEffect && activeInventoryEffect.type === 'jetpack');
+                if (jetActive) {
                     if (playerY > 2.0) playerY -= 0.8 * deltaTime;
                     if (playerY < 2.0) playerY = 2.0;
                     verticalVelocity = 0;
-                    // 喷气火焰脉冲效果
-                    jetFlameGroup.children.forEach(f => {
-                        f.scale.setScalar(0.8 + Math.random() * 0.4);
-                    });
+                    jetFlameGroup.visible = true;
+                    jetFlameGroup.children.forEach(f => { f.scale.setScalar(0.8 + Math.random() * 0.4); });
                 }
                 // 磁铁光环旋转
-                if (activePowerUps.magnet && activePowerUps.magnet > 0) {
+                const magActive = (activePowerUps.magnet && activePowerUps.magnet > 0) ||
+                    (activeInventoryEffect && activeInventoryEffect.type === 'magnet');
+                if (magActive) {
+                    magnetRing.visible = true;
                     magnetRing.rotation.z += 3 * deltaTime;
                     magnetRing.position.y = 0.8;
                 }
-                // 双倍光环旋转
+                // 双倍光环
                 if (activePowerUps.doubleScore && activePowerUps.doubleScore > 0) {
                     doubleGlow.rotation.z -= 2 * deltaTime;
                     doubleGlow.position.y = 0.8;
                 }
-                // 滑板持续直到碰撞
+                // 滑板
                 if (!doubleJumpAvailable && activePowerUps.skate) {
                     delete activePowerUps.skate;
                     skateGroup.visible = false;
@@ -2142,16 +2347,125 @@
 
             function getEffectiveSpeed() {
                 let s = speed;
-                if (activePowerUps.jetpack && activePowerUps.jetpack > 0) s = Math.max(s, 11);
+                // 喷气背包：50%加速
+                if ((activePowerUps.jetpack && activePowerUps.jetpack > 0) ||
+                    (activeInventoryEffect && activeInventoryEffect.type === 'jetpack')) {
+                    s *= 1.5;
+                }
+                // 滑板：25%加速
+                if (activeInventoryEffect && activeInventoryEffect.type === 'skate') {
+                    s *= 1.25;
+                }
                 return Math.min(s, MAX_SPEED);
             }
 
             // ==================== 游戏结束 ====================
+            let isStaggered = false;
+            let staggerTimer = 0;
+            let isDying = false;
+            let deathTimer = 0;
+
+            // 游戏状态快照（用于复活，每1秒记录一次，保留15秒）
+            let gameSnapshots = [];
+            let snapshotTimer = 0;
+            const SNAPSHOT_INTERVAL = 1.5;  // 每1.5秒一次快照（降低CPU开销）
+            const MAX_SNAPSHOTS = 15;        // 保留约22秒历史(1.5s×15)
+
+            function saveSnapshot() {
+                const snap = {
+                    score, distance, speed, comboCount, lastCollectTime, gameTime,
+                    currentLane, actualX, playerY, isJumping, isCrouching,
+                    verticalVelocity, hasDoubleJumped, doubleJumpAvailable,
+                    activePowerUps: { ...activePowerUps },
+                    activeInventoryEffect: activeInventoryEffect ? { ...activeInventoryEffect } : null,
+                    headStartTimer, policeZ, policeActive, policeTimer, policeSpeed,
+                    playerGroupZ: playerGroup.position.z,
+                    currentTheme, lastThemeSwitchZ, spawnTimer, spawnInterval,
+                    playerGroupScaleY: playerGroup.scale.y,
+                    playerGroupRotX: playerGroup.rotation.x,
+                    playerGroupRotZ: playerGroup.rotation.z,
+                };
+                gameSnapshots.push(snap);
+                while (gameSnapshots.length > MAX_SNAPSHOTS) gameSnapshots.shift();
+            }
+
+            function revivePlayer() {
+                if (getTotalPlays() < 5 || gameSnapshots.length === 0) return false;
+                // 消耗5次游戏次数（优先扣免费次数，再扣钥匙库存）
+                for (let i = 0; i < 5; i++) consumePlay();
+                savePersistentData();
+                // 恢复到约15秒前的快照（每1.5s一个快照，10个≈15秒）
+                const rewindCount = Math.min(10, gameSnapshots.length - 1);
+                const idx = Math.max(0, gameSnapshots.length - 1 - rewindCount);
+                const s = gameSnapshots[idx];
+                if (!s) return false;
+                score = s.score; distance = s.distance; speed = s.speed;
+                comboCount = s.comboCount; lastCollectTime = s.lastCollectTime; gameTime = s.gameTime;
+                currentLane = s.currentLane; actualX = s.actualX; playerY = s.playerY;
+                isJumping = s.isJumping; isCrouching = s.isCrouching;
+                verticalVelocity = s.verticalVelocity; hasDoubleJumped = s.hasDoubleJumped;
+                doubleJumpAvailable = s.doubleJumpAvailable;
+                activePowerUps = { ...s.activePowerUps };
+                activeInventoryEffect = s.activeInventoryEffect ? { ...s.activeInventoryEffect } : null;
+                headStartTimer = s.headStartTimer;
+                policeZ = s.policeZ; policeActive = s.policeActive;
+                policeTimer = s.policeTimer; policeSpeed = s.policeSpeed;
+                playerGroup.position.set(actualX, playerY, s.playerGroupZ);
+                playerGroup.scale.set(1, s.playerGroupScaleY, 1);
+                playerGroup.rotation.set(s.playerGroupRotX, 0, s.playerGroupRotZ);
+                currentTheme = s.currentTheme; lastThemeSwitchZ = s.lastThemeSwitchZ;
+                spawnTimer = s.spawnTimer; spawnInterval = s.spawnInterval;
+                // 清除玩家前方10米所有障碍物（避免复活即撞）
+                for (let i = worldItems.length - 1; i >= 0; i--) {
+                    const item = worldItems[i];
+                    const iz = item.userData.z !== undefined ? item.userData.z : item.position.z;
+                    if (iz > playerGroup.position.z - 3 && iz < playerGroup.position.z + 12) {
+                        scene.remove(item); disposeGroup(item); worldItems.splice(i, 1);
+                    }
+                }
+                // 重建轨道段
+                for (const seg of trackSegments) { scene.remove(seg); disposeGroup(seg); }
+                trackSegments = [];
+                ensureTrackSegments(playerGroup.position.z);
+                // 重置警察位置（推到远处）+ 30秒复活保护
+                policeActive = false; policeTimer = 0;
+                policeZ = playerGroup.position.z - 20;
+                if (police) police.position.z = policeZ;
+                reviveProtectionTimer = 30;
+                // 重置死亡状态
+                isDying = false; deathTimer = 0; isStaggered = false; staggerTimer = 0;
+                playerGroup.visible = true;
+                // 恢复游戏
+                gameState = GAME_STATES.PLAYING;
+                document.getElementById('gameover-overlay').classList.add('hidden');
+                document.getElementById('hud').classList.remove('hidden');
+                document.getElementById('bottom-timer-bar').classList.add('hidden');
+                updateMenuStats();
+                updateInventoryPanel();
+                updateHUD();
+                if (!isMuted) startBgMusic();
+                playSound('powerup');
+                spawnFloatText(actualX, playerY + 2, playerGroup.position.z, '✨ 复活成功！', '#ffdd00');
+                return true;
+            }
+
             function triggerGameOver() {
-                gameState = GAME_STATES.GAMEOVER;
+                if (isDying) return;
+                // 先播放死亡动画，延迟弹出结算
+                isDying = true;
+                deathTimer = 0.8;
+                isStaggered = true;
+                staggerTimer = 0.8;
                 playSound('crash');
                 playSound('gameover');
                 stopBgMusic();
+                // 玩家倒地倾斜
+                playerGroup.rotation.z = 1.2;
+                playerGroup.rotation.x = -0.5;
+            }
+
+            function finishGameOver() {
+                gameState = GAME_STATES.GAMEOVER;
                 // 清除所有道具特效
                 doubleJumpAvailable = false;
                 activePowerUps = {};
@@ -2171,7 +2485,23 @@
                 savePersistentData();
                 updateBottomTimer();
                 updateMenuStats();
-                // 显示结束界面
+                // 显示结束界面（复活按钮始终显示，总次数不足时置灰）
+                const reviveBtn = document.getElementById('btn-revive-go');
+                const totalPlays = getTotalPlays();
+                const canRevive = totalPlays >= 5 && gameSnapshots.length >= 10;
+                reviveBtn.style.display = '';
+                if (canRevive) {
+                    reviveBtn.disabled = false;
+                    reviveBtn.style.opacity = '1';
+                    reviveBtn.style.cursor = 'pointer';
+                    reviveBtn.textContent = '🔑 消耗5次游戏次数复活（剩余' + totalPlays + '次）';
+                } else {
+                    reviveBtn.disabled = true;
+                    reviveBtn.style.opacity = '0.5';
+                    reviveBtn.style.cursor = 'not-allowed';
+                    const reason = totalPlays < 5 ? '次数不足' : '游戏时长不足';
+                    reviveBtn.textContent = '🔑 消耗5次游戏次数复活（' + reason + '）';
+                }
                 document.getElementById('gameover-overlay').classList.remove('hidden');
                 document.getElementById('go-score').textContent = '💰 得分：' + score;
                 document.getElementById('go-distance').textContent = '📏 距离：' + Math.floor(distance) + 'm';
@@ -2188,6 +2518,8 @@
             }
 
             function resetGame() {
+                gameSnapshots = []; snapshotTimer = 0;
+                reviveProtectionTimer = 0;
                 score = 0;
                 distance = 0;
                 speed = BASE_SPEED;
@@ -2214,26 +2546,33 @@
                 lastThemeSwitchZ = 0;
                 playerGroup.position.set(0, 0, 0);
                 playerGroup.scale.set(1, 1, 1);
+                playerGroup.rotation.set(0, 0, 0); // 重置死亡动画旋转
                 skateGroup.visible = false;
                 magnetRing.visible = false;
                 doubleGlow.visible = false;
                 jetFlameGroup.visible = false;
-                // 应用商城效果
-                jetpackBaseDuration = 4 + (shopPurchases.jetpackUp ? 1 : 0);
-                magnetBaseDuration = 5 + (shopPurchases.magnetUp ? 1 : 0);
-                let headStartTimer = shopPurchases.headStart ? 2.0 : 0;
+                // ★ 重置死亡/硬直状态（修复卡死BUG）
+                isDying = false;
+                deathTimer = 0;
+                isStaggered = false;
+                staggerTimer = 0;
+                // 应用库存道具：抢先起步自动消耗1个
+                activeInventoryEffect = null;
+                headStartTimer = 0;
+                if (inventory.headStart > 0) {
+                    inventory.headStart--;
+                    headStartTimer = 10;
+                    savePersistentData();
+                    updateInventoryPanel();
+                }
                 // 清除世界物品
                 for (const item of worldItems) {
                     scene.remove(item);
                     disposeGroup(item);
                 }
                 worldItems = [];
-                // 清除粒子
-                for (const p of particles) {
-                    scene.remove(p);
-                    p.geometry.dispose();
-                    p.material.dispose();
-                }
+                // 清除粒子（共享几何体/材质不dispose）
+                for (const p of particles) { scene.remove(p); }
                 particles = [];
                 // 清除浮动文字
                 for (const ft of floatTexts) {
@@ -2264,6 +2603,7 @@
                 document.getElementById('hud').classList.remove('hidden');
                 document.getElementById('mobile-hint').style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
                 gameState = GAME_STATES.PLAYING;
+                updateInventoryPanel(); // gameState变更后刷新库存面板
                 stopBgMusic();
                 startBgMusic();
                 if (police) {
@@ -2287,11 +2627,7 @@
                     disposeGroup(item);
                 }
                 worldItems = [];
-                for (const p of particles) {
-                    scene.remove(p);
-                    p.geometry.dispose();
-                    p.material.dispose();
-                }
+                for (const p of particles) { scene.remove(p); }
                 particles = [];
                 for (const ft of floatTexts) {
                     if (ft.element.parentNode) ft.element.remove();
@@ -2309,10 +2645,12 @@
                 }
                 playerGroup.position.set(0, 0, 0);
                 playerGroup.scale.set(1, 1, 1);
+                playerGroup.rotation.set(0, 0, 0);
                 skateGroup.visible = false;
                 magnetRing.visible = false;
                 doubleGlow.visible = false;
                 jetFlameGroup.visible = false;
+                isDying = false; deathTimer = 0; isStaggered = false; staggerTimer = 0;
                 actualX = 0;
                 currentLane = 0;
                 playerY = 0;
@@ -2361,8 +2699,7 @@
                 ];
                 for (const pi of powerInfo) {
                     if (activePowerUps[pi.key] && activePowerUps[pi.key] > 0) {
-                        const maxDur = pi.key === 'skate' ? 9999 : (pi.key === 'magnet' ? magnetBaseDuration : pi.key === 'doubleScore' ? 8 :
-                            jetpackBaseDuration);
+                        const maxDur = pi.key === 'skate' ? 9999 : (pi.key === 'magnet' ? 5 : pi.key === 'doubleScore' ? 8 : 4);
                         const pct = Math.min(100, (activePowerUps[pi.key] / maxDur) * 100);
                         html += `<div class="powerup-slot">
                 <span class="icon">${pi.icon}</span>
@@ -2376,137 +2713,98 @@
             // ==================== 输入处理 ====================
             const keys = {};
             window.addEventListener('keydown', (e) => {
-                // 仅处理游戏相关按键，避免阻止所有浏览器快捷键
                 const gameKeys = ['a', 'd', 'w', 's', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'p', 'r', 'm', 'enter', ' '];
                 const keyLower = e.key.toLowerCase();
                 if (!gameKeys.includes(keyLower) && !gameKeys.includes(e.code?.toLowerCase())) return;
                 e.preventDefault();
+                // P/R/M/Enter/Space 处理
+                if (keyLower === 'p' && (gameState === GAME_STATES.PLAYING || gameState === GAME_STATES.PAUSED)) { togglePause(); return; }
+                if (keyLower === 'r' && gameState === GAME_STATES.GAMEOVER) { resetGame(); return; }
+                if (keyLower === 'm' && gameState === GAME_STATES.GAMEOVER) { returnToMenu(); return; }
+                if (gameState === GAME_STATES.MENU && (keyLower === 'enter' || keyLower === ' ')) { startGame(); return; }
+                if (gameState !== GAME_STATES.PLAYING) return;
+                // 即时响应：左右移动（A/←左移, D/→右移）
+                if ((keyLower === 'a' || keyLower === 'arrowleft') && currentLane < 1) { currentLane++; return; }
+                if ((keyLower === 'd' || keyLower === 'arrowright') && currentLane > -1) { currentLane--; return; }
+                // 即时响应：跳跃
+                if ((keyLower === 'w' || keyLower === 'arrowup') && !isCrouching) {
+                    if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
+                    else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
+                    return;
+                }
+                // 下蹲：依然用按键状态
                 keys[keyLower] = true;
                 keys[e.code] = true;
-                if (keyLower === 'p' && (gameState === GAME_STATES.PLAYING || gameState === GAME_STATES.PAUSED)) {
-                    togglePause();
-                }
-                if (keyLower === 'r' && gameState === GAME_STATES.GAMEOVER) {
-                    resetGame();
-                }
-                if (keyLower === 'm' && gameState === GAME_STATES.GAMEOVER) {
-                    returnToMenu();
-                }
-                if (gameState === GAME_STATES.MENU && (keyLower === 'enter' || keyLower === ' ')) {
-                    startGame();
-                }
             });
             window.addEventListener('keyup', (e) => {
-                keys[e.key.toLowerCase()] = false;
+                const keyLower = e.key.toLowerCase();
+                keys[keyLower] = false;
                 keys[e.code] = false;
+                // 松开下蹲键则取消下蹲
+                if ((keyLower === 's' || keyLower === 'arrowdown') && gameState === GAME_STATES.PLAYING && isCrouching) {
+                    isCrouching = false;
+                }
             });
 
             function handleInput() {
                 if (gameState !== GAME_STATES.PLAYING) return;
-                // 左右移动（A/←左移, D/→右移——已根据实际渲染方向校正）
-                if ((keys['a'] || keys['arrowleft'] || keys['KeyA'] || keys['ArrowLeft']) && currentLane < 1) {
-                    currentLane++;
-                    keys['a'] = false;
-                    keys['arrowleft'] = false;
-                    keys['KeyA'] = false;
-                    keys['ArrowLeft'] = false;
-                }
-                if ((keys['d'] || keys['arrowright'] || keys['KeyD'] || keys['ArrowRight']) && currentLane > -1) {
-                    currentLane--;
-                    keys['d'] = false;
-                    keys['arrowright'] = false;
-                    keys['KeyD'] = false;
-                    keys['ArrowRight'] = false;
-                }
-                // 跳跃
-                if ((keys['w'] || keys['arrowup'] || keys['KeyW'] || keys['ArrowUp']) && !isCrouching) {
-                    if (!isJumping) {
-                        isJumping = true;
-                        verticalVelocity = 9.5;
-                        hasDoubleJumped = false;
-                        playSound('jump');
-                    } else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) {
-                        // 二段跳
-                        verticalVelocity = 8;
-                        hasDoubleJumped = true;
-                        playSound('jump');
-                    }
-                    keys['w'] = false;
-                    keys['arrowup'] = false;
-                    keys['KeyW'] = false;
-                    keys['ArrowUp'] = false;
-                }
-                // 下蹲
+                // 下蹲状态检查
                 if (keys['s'] || keys['arrowdown'] || keys['KeyS'] || keys['ArrowDown']) {
-                    if (!isJumping && !isCrouching) {
-                        isCrouching = true;
-                        playSound('crouch');
-                    }
-                } else if (isCrouching && !(keys['s'] || keys['arrowdown'] || keys['KeyS'] || keys['ArrowDown'])) {
-                    isCrouching = false;
+                    if (!isJumping && !isCrouching) { isCrouching = true; playSound('crouch'); }
                 }
             }
 
-            // 触摸控制
-            let touchStartX = 0;
-            let touchStartY = 0;
-            let touchStartTime = 0;
-            let touchActive = false;
-            const canvas = renderer.domElement;
+            // 触摸控制（移动端）
+            let touchStartX = 0, touchStartY = 0, touchActive = false;
+            let touchLaneCooldown = 0; // 防连触发
 
-            canvas.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                if (e.touches.length === 1) {
-                    touchStartX = e.touches[0].clientX;
-                    touchStartY = e.touches[0].clientY;
-                    touchStartTime = Date.now();
-                    touchActive = true;
-                }
-                initAudio();
-            }, { passive: false });
-
-            canvas.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
-                const dx = e.touches[0].clientX - touchStartX;
-                const dy = e.touches[0].clientY - touchStartY;
-                const halfW = window.innerWidth / 2;
-                if (touchStartX < halfW) {
-                    // 左半屏：切换轨道
-                    if (Math.abs(dx) > 40) {
-                        if (dx > 0 && currentLane > -1) { currentLane--;
-                            touchStartX = e.touches[0].clientX; } else if (dx < 0 && currentLane < 1) { currentLane++;
-                            touchStartX = e.touches[0].clientX; }
+            function addTouchListeners(el) {
+                el.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    initAudio();
+                    if (gameState === GAME_STATES.MENU) { startGame(); return; }
+                    if (e.touches.length === 1) {
+                        touchStartX = e.touches[0].clientX;
+                        touchStartY = e.touches[0].clientY;
+                        touchActive = true;
                     }
-                } else {
-                    // 右半屏：跳跃/下蹲
-                    if (dy < -35 && !isCrouching) {
-                        if (!isJumping) {
-                            isJumping = true;
-                            verticalVelocity = 9.5;
-                            hasDoubleJumped = false;
-                            playSound('jump');
-                        } else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) {
-                            verticalVelocity = 8;
-                            hasDoubleJumped = true;
-                            playSound('jump');
+                }, { passive: false });
+
+                el.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
+                    const dx = e.touches[0].clientX - touchStartX;
+                    const dy = e.touches[0].clientY - touchStartY;
+                    const absDx = Math.abs(dx), absDy = Math.abs(dy);
+                    const threshold = 30;
+                    // 优先判定水平/垂直
+                    if (absDx > absDy && absDx > threshold && touchLaneCooldown <= 0) {
+                        // 水平滑动切换轨道
+                        if (dx > 0 && currentLane > -1) { currentLane--; touchLaneCooldown = 0.15; }
+                        else if (dx < 0 && currentLane < 1) { currentLane++; touchLaneCooldown = 0.15; }
+                        touchStartX = e.touches[0].clientX;
+                        touchStartY = e.touches[0].clientY;
+                    } else if (absDy > absDx && absDy > threshold) {
+                        // 垂直滑动跳跃/下蹲
+                        if (dy < 0 && !isCrouching) {
+                            if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
+                            else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
+                        } else if (dy > 0 && !isJumping && !isCrouching) {
+                            isCrouching = true; playSound('crouch');
                         }
                         touchStartY = e.touches[0].clientY;
-                    } else if (dy > 35 && !isJumping && !isCrouching) {
-                        isCrouching = true;
-                        playSound('crouch');
-                        touchStartY = e.touches[0].clientY;
                     }
-                }
-            }, { passive: false });
+                }, { passive: false });
 
-            canvas.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                touchActive = false;
-                if (isCrouching && gameState === GAME_STATES.PLAYING) {
-                    isCrouching = false;
-                }
-            }, { passive: false });
+                el.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    touchActive = false;
+                    if (isCrouching && gameState === GAME_STATES.PLAYING) { isCrouching = false; }
+                }, { passive: false });
+            }
+            // 同时监听 canvas 和 ui-layer
+            addTouchListeners(renderer.domElement);
+            addTouchListeners(document.getElementById('ui-layer'));
 
             // ==================== UI 按钮 ====================
             function togglePause() {
@@ -2525,8 +2823,14 @@
             }
 
             function startGame() {
+                // 检查游戏次数
+                if (getTotalPlays() <= 0) {
+                    alert('🔑 游戏次数不足！\n\n今日免费次数已用完，请前往商城购买钥匙（200金币/把）。');
+                    return;
+                }
                 initAudio();
                 playSound('click');
+                consumePlay();
                 resetGame();
                 gameState = GAME_STATES.PLAYING;
                 document.getElementById('menu-screen').classList.add('hidden');
@@ -2552,6 +2856,11 @@
             document.getElementById('btn-menu-pause').addEventListener('click', () => { initAudio();
                 playSound('click');
                 returnToMenu(); });
+            document.getElementById('btn-revive-go').addEventListener('click', function() {
+                if (this.disabled) return;
+                initAudio(); playSound('click');
+                if (!revivePlayer()) alert('🔑 钥匙不足或游戏时长不足，无法复活。');
+            });
             document.getElementById('btn-restart-go').addEventListener('click', () => { initAudio();
                 playSound('click');
                 resetGame(); });
@@ -2575,28 +2884,28 @@
                 document.getElementById('shop-balance').textContent = totalCoins;
                 const container = document.getElementById('shop-items');
                 container.innerHTML = SHOP_ITEMS.map(item => {
-                    const owned = shopPurchases[item.id];
                     return `<div class="shop-item">
                         <div class="item-icon">${item.icon}</div>
                         <div class="item-info">
                             <div class="item-name">${item.name}</div>
                             <div class="item-desc">${item.desc}</div>
+                            <div class="item-stock">库存：${inventory[item.id] || 0}</div>
                         </div>
                         <div class="item-cost">💰${item.cost}</div>
-                        <button class="btn-buy${owned ? ' owned' : ''}" data-id="${item.id}"
-                            ${owned ? 'disabled' : ''}>${owned ? '✔已购' : '购买'}</button>
+                        <button class="btn-buy" data-id="${item.id}">购买</button>
                     </div>`;
                 }).join('');
-                // 购买事件
-                container.querySelectorAll('.btn-buy:not(.owned)').forEach(btn => {
+                // 购买事件（可无限次重复购买）
+                container.querySelectorAll('.btn-buy').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const item = SHOP_ITEMS.find(i => i.id === btn.dataset.id);
                         if (item && totalCoins >= item.cost) {
                             totalCoins -= item.cost;
-                            shopPurchases[item.id] = true;
+                            inventory[item.id] = (inventory[item.id] || 0) + 1;
                             savePersistentData();
                             renderShop();
                             updateMenuStats();
+                            updateInventoryPanel();
                             playSound('powerup');
                         }
                     });
@@ -2681,6 +2990,31 @@
                 document.getElementById('menu-highscore').textContent = highScore;
                 document.getElementById('menu-maxdist').textContent = maxDistance;
                 document.getElementById('menu-totalcoins').textContent = totalCoins;
+                document.getElementById('menu-plays').textContent = getTotalPlays();
+            }
+
+            // ==================== 道具库存面板 ====================
+            function updateInventoryPanel() {
+                const panel = document.getElementById('inventory-panel');
+                if (gameState !== GAME_STATES.PLAYING) { panel.classList.add('hidden'); return; }
+                panel.classList.remove('hidden');
+                const container = document.getElementById('inv-items');
+                // 过滤掉钥匙（钥匙仅用于复活，非战斗中道具）
+                const battleItems = SHOP_ITEMS.filter(item => item.id !== 'keys');
+                container.innerHTML = battleItems.map(item => {
+                    const count = inventory[item.id] || 0;
+                    const emptyClass = count <= 0 ? ' empty' : '';
+                    return `<div class="inv-item${emptyClass}" data-type="${item.id}">
+                        <span class="inv-icon">${item.icon}</span>${item.name}
+                        <span class="inv-count">${count}</span>
+                    </div>`;
+                }).join('');
+                // 点击使用道具
+                container.querySelectorAll('.inv-item:not(.empty)').forEach(el => {
+                    el.addEventListener('click', () => {
+                        useInventoryItem(el.dataset.type);
+                    });
+                });
             }
 
             // ==================== 底部道具计时条 ====================
@@ -2690,10 +3024,10 @@
                 let hasActive = false;
                 let html = '';
                 const powerInfo = [
-                    { key: 'magnet', icon: '🧲', name: '磁铁', color: '#4dc9f6', max: magnetBaseDuration + (shopPurchases.magnetUp ? 1 : 0) },
+                    { key: 'magnet', icon: '🧲', name: '磁铁', color: '#4dc9f6', max: 5 },
                     { key: 'doubleScore', icon: '⭐', name: '双倍', color: '#ffd700', max: 8 },
-                    { key: 'jetpack', icon: '🚀', name: '喷气', color: '#ff6b6b', max: jetpackBaseDuration + (shopPurchases.jetpackUp ? 1 : 0) },
-                    { key: 'skate', icon: '🛹', name: '滑板', color: '#51cf66', max: 9999 },
+                    { key: 'jetpack', icon: '🚀', name: '喷气', color: '#ff6b6b', max: 4 },
+                    { key: 'skate', icon: '🛹', name: '滑板', color: '#51cf66', max: 8 },
                 ];
                 for (const pi of powerInfo) {
                     if (activePowerUps[pi.key] && activePowerUps[pi.key] > 0) {
@@ -2705,6 +3039,18 @@
                             <span>${Math.ceil(activePowerUps[pi.key])}s</span>
                         </div>`;
                     }
+                }
+                // 库存激活效果
+                if (activeInventoryEffect) {
+                    hasActive = true;
+                    const invItem = SHOP_ITEMS.find(i => i.id === activeInventoryEffect.type);
+                    const colorMap = { headStart: '#ff8844', skate: '#51cf66', magnet: '#4dc9f6', jetpack: '#ff6b6b' };
+                    const maxMap = { headStart: 10, skate: 8, magnet: 5, jetpack: 4 };
+                    html += `<div class="bottom-timer-item">
+                        <span class="bt-icon">${invItem.icon}</span>${invItem.name}(库存)
+                        <div class="bottom-timer-bar-bg"><div class="bottom-timer-bar-fill" style="width:${(activeInventoryEffect.timer/maxMap[activeInventoryEffect.type])*100}%;background:${colorMap[activeInventoryEffect.type]}"></div></div>
+                        <span>${Math.ceil(activeInventoryEffect.timer)}s</span>
+                    </div>`;
                 }
                 items.innerHTML = html;
                 if (hasActive && gameState === GAME_STATES.PLAYING) {
@@ -2731,8 +3077,17 @@
                 if (gameState !== GAME_STATES.PLAYING) return;
                 deltaTime = Math.min(deltaTime, 0.1);
                 gameTime += deltaTime;
+                // 触屏冷却
+                if (touchLaneCooldown > 0) touchLaneCooldown -= deltaTime;
 
                 handleInput();
+
+                // 快照保存（每1秒）
+                snapshotTimer += deltaTime;
+                if (snapshotTimer >= SNAPSHOT_INTERVAL) {
+                    snapshotTimer -= SNAPSHOT_INTERVAL;
+                    saveSnapshot();
+                }
 
                 // 更新速度
                 const effSpeed = getEffectiveSpeed();
@@ -2760,17 +3115,22 @@
                 if (Math.abs(actualX - targetX) < 0.01) actualX = targetX;
                 playerGroup.position.x = actualX;
 
-                // 跳跃物理
-                const gravity = -16;  // 降低重力，增加滞空感
+                // 跳跃物理（适配斜坡地形）
+                const gravity = -16;
+                const groundY = getGroundHeight(playerGroup.position.z);
                 if (isJumping) {
                     verticalVelocity += gravity * deltaTime;
                     playerY += verticalVelocity * deltaTime;
-                    if (playerY <= 0) {
-                        playerY = 0;
+                    if (playerY <= groundY) {
+                        playerY = groundY;
                         verticalVelocity = 0;
                         isJumping = false;
                         hasDoubleJumped = false;
                     }
+                } else if (Math.abs(playerY - groundY) > 0.05) {
+                    // 非跳跃时平滑跟随地形
+                    playerY += (groundY - playerY) * 0.3;
+                    if (Math.abs(playerY - groundY) < 0.02) playerY = groundY;
                 }
                 playerGroup.position.y = playerY;
 
@@ -2813,8 +3173,8 @@
 
                 // 生成物品
                 spawnTimer += deltaTime;
-                const minInterval = 0.55;
-                const maxInterval = 1.5;
+                const minInterval = 0.35;
+                const maxInterval = 1.0;
                 const distFactor = Math.min(distance / 2000, 1);
                 spawnInterval = maxInterval - (maxInterval - minInterval) * distFactor;
                 if (spawnTimer >= spawnInterval + Math.random() * 0.3) {
@@ -2832,8 +3192,9 @@
                         // 空中弧形金币（喷气高度2.0附近）
                         const airCoins = [1.8, 2.1, 2.4, 2.1, 1.8];
                         const airZ = [0, 0.4, 0.8, 1.2, 1.6];
+                        const jgY = getGroundHeight(jZ);
                         for (let ai = 0; ai < airCoins.length; ai++) {
-                            createCoin(jLane, jZ + airZ[ai], airCoins[ai]);
+                            createCoin(jLane, jZ + airZ[ai], airCoins[ai] + jgY);
                         }
                     }
                 } else {
@@ -2874,11 +3235,28 @@
                     }
                 }
 
-                // 碰撞检测
-                checkCollisions();
+                // 碰撞检测（死亡动画中跳过）
+                if (!isDying) checkCollisions();
+                if (isDying) {
+                    deathTimer -= deltaTime;
+                    staggerTimer -= deltaTime;
+                    // 死亡动画：倒地旋转
+                    playerGroup.rotation.z += (1.5 - playerGroup.rotation.z) * 0.15;
+                    playerGroup.rotation.x += (-0.6 - playerGroup.rotation.x) * 0.15;
+                    playerGroup.position.y += (-1.5 - playerGroup.position.y) * 0.1;
+                    if (deathTimer <= 0) finishGameOver();
+                    return;
+                }
+                // 受击硬直恢复
+                if (isStaggered) {
+                    staggerTimer -= deltaTime;
+                    if (staggerTimer <= 0) { isStaggered = false; playerGroup.rotation.z = 0; }
+                }
                 if (gameState === GAME_STATES.GAMEOVER) return;
 
-                // 警察追击（8秒后激活，速度递增，逼近时压迫感增强）
+                // 复活保护倒计时
+                if (reviveProtectionTimer > 0) reviveProtectionTimer -= deltaTime;
+                // 警察追击（8秒后激活，速度与玩家基础速度持平）
                 policeTimer += deltaTime;
                 if (policeTimer >= 8 && !policeActive) {
                     policeActive = true;
@@ -2887,12 +3265,22 @@
                 }
                 if (policeActive && police) {
                     const distToPlayer = playerGroup.position.z - policeZ;
-                    // 距离越近速度越快
-                    const chaseFactor = Math.max(1, 8 / Math.max(distToPlayer, 3));
-                    policeSpeed = (7 + distance * 0.006) * chaseFactor;
-                    policeSpeed = Math.min(policeSpeed, 13);
-                    policeZ += policeSpeed * deltaTime;
-                    police.position.z = policeZ;
+                    // 复活保护期间：警察无法抓捕
+                    if (reviveProtectionTimer > 0) {
+                        // 警察保持在远处，不追捕
+                        if (policeZ < playerGroup.position.z - 15) {
+                            policeZ += BASE_SPEED * 0.6 * deltaTime; // 慢速跟随
+                        }
+                        police.position.z = policeZ;
+                        police.position.y = 0;
+                    } else {
+                        // 正常追击：基础速度与玩家持平(BASE_SPEED)，距离近时略快
+                        const chaseFactor = Math.max(1, 6 / Math.max(distToPlayer, 4));
+                        policeSpeed = (BASE_SPEED + distance * 0.003) * chaseFactor;
+                        policeSpeed = Math.min(policeSpeed, BASE_SPEED + 3);
+                        policeZ += policeSpeed * deltaTime;
+                        police.position.z = policeZ;
+                    }
                     // 警笛红蓝灯闪烁
                     const sirenFreq = 6 + (1 / Math.max(distToPlayer, 2)) * 12;
                     const sirenPhase = Math.sin(gameTime * sirenFreq);
@@ -2960,9 +3348,11 @@
                     particles.shift();
                 }
 
-                // 更新HUD + 底部计时条
+                // 更新HUD + 底部计时条（计时条每0.3秒更新，降低DOM操作频率）
                 updateHUD();
-                updateBottomTimer();
+                if (!window._btThrottle) window._btThrottle = 0;
+                window._btThrottle += deltaTime;
+                if (window._btThrottle >= 0.3) { window._btThrottle = 0; updateBottomTimer(); }
 
                 // 相机跟随
                 const camTargetX = actualX * 0.5;
@@ -2974,8 +3364,7 @@
                 camera.lookAt(lookTarget);
 
                 // 更新动态灯光
-                pointLight1.position.set(3, 2.5, playerGroup.position.z + 5);
-                pointLight2.position.set(-3, 2.5, playerGroup.position.z + 5);
+                pointLight1.position.set(0, 3, playerGroup.position.z + 5);
             }
 
             function animate(timestamp) {
