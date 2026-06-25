@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- 【移动端适配】增强视口配置：禁用缩放/双击/页面溢出，viewport-fit=cover适配全面屏 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
     <title>3D 地铁跑酷 - Subway Surfer</title>
     <style>
         :root {
@@ -31,6 +35,11 @@
             -webkit-user-select: none;
             user-select: none;
             -webkit-tap-highlight-color: transparent;
+            /* 【移动端适配】禁止长按菜单、文本选择、拖拽滚动溢出 */
+            -webkit-overflow-scrolling: none;
+            overscroll-behavior: none;
+            -webkit-touch-callout: none;
+            -webkit-user-drag: none;
             position: fixed;
             top: 0;
             left: 0;
@@ -2888,11 +2897,28 @@
             let touchStartX = 0, touchStartY = 0, touchActive = false;
             let touchLaneCooldown = 0; // 防连触发
 
+            // 【移动端适配】判断触摸目标是否为可交互按钮/控件
+            function isInteractiveElement(target) {
+                return !!(target.closest('button') || target.closest('.btn') ||
+                    target.closest('.inv-item') || target.closest('.char-preset') ||
+                    target.closest('input') || target.closest('label') ||
+                    target.closest('.btn-buy') || target.closest('.btn-close-panel') ||
+                    target.closest('.shop-item button'));
+            }
+
             function addTouchListeners(el) {
                 el.addEventListener('touchstart', (e) => {
+                    // 【移动端适配·BUG修复】按钮触摸优先级最高：检测到交互元素时
+                    // 不阻止默认行为、不触发startGame，让按钮自身click事件正常生效
+                    if (isInteractiveElement(e.target)) {
+                        return;
+                    }
                     e.preventDefault();
                     initAudio();
+                    // 【移动端适配】仅空白区域点击触发进入游戏
                     if (gameState === GAME_STATES.MENU) { startGame(); return; }
+                    // 【移动端适配·BUG修复】结算/暂停状态下不捕获触摸坐标，防止逻辑冲突
+                    if (gameState !== GAME_STATES.PLAYING) return;
                     if (e.touches.length === 1) {
                         touchStartX = e.touches[0].clientX;
                         touchStartY = e.touches[0].clientY;
@@ -2901,6 +2927,10 @@
                 }, { passive: false });
 
                 el.addEventListener('touchmove', (e) => {
+                    // 【移动端适配·BUG修复】触摸目标是按钮时放行，不阻止滚动/点击
+                    if (isInteractiveElement(e.target)) {
+                        return;
+                    }
                     e.preventDefault();
                     if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
                     const dx = e.touches[0].clientX - touchStartX;
@@ -2927,14 +2957,20 @@
                 }, { passive: false });
 
                 el.addEventListener('touchend', (e) => {
+                    // 【移动端适配·BUG修复】触摸目标是按钮时放行，保证按钮click事件正常触发
+                    if (isInteractiveElement(e.target)) {
+                        touchActive = false;
+                        if (isCrouching && gameState === GAME_STATES.PLAYING) { isCrouching = false; }
+                        return;
+                    }
                     e.preventDefault();
                     touchActive = false;
                     if (isCrouching && gameState === GAME_STATES.PLAYING) { isCrouching = false; }
                 }, { passive: false });
             }
-            // 同时监听 canvas 和 ui-layer
+            // 【移动端适配】仅监听canvas和ui-layer，保证触摸事件覆盖全屏
             addTouchListeners(renderer.domElement);
-            addTouchListeners(document.getElementById('ui-layer'));
+            addTouchListeners(domUiLayer);
 
             // ==================== UI 按钮 ====================
             function togglePause() {
@@ -2975,29 +3011,38 @@
                 startBgMusic();
             }
 
-            document.getElementById('btn-start').addEventListener('click', startGame);
-            document.getElementById('btn-pause').addEventListener('click', () => { initAudio();
-                togglePause(); });
-            document.getElementById('btn-resume').addEventListener('click', () => { initAudio();
-                togglePause(); });
-            document.getElementById('btn-restart-pause').addEventListener('click', () => { initAudio();
-                playSound('click');
-                resetGame(); });
-            document.getElementById('btn-menu-pause').addEventListener('click', () => { initAudio();
-                playSound('click');
-                returnToMenu(); });
-            document.getElementById('btn-revive-go').addEventListener('click', function() {
-                if (this.disabled) return;
+            // 【移动端适配】双向绑定函数：为按钮同时注册touchstart(移动端即时响应)+click(桌面端兼容)
+            function bindButton(id, handler) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                let touchFired = false;
+                el.addEventListener('touchstart', (e) => {
+                    e.stopPropagation(); // 【移动端适配·BUG修复】阻止事件冒泡到ui-layer
+                    touchFired = true;
+                    handler(e);
+                }, { passive: true });
+                el.addEventListener('click', (e) => {
+                    if (touchFired) { touchFired = false; return; } // 移动端已处理，跳过click
+                    e.stopPropagation();
+                    handler(e);
+                });
+            }
+
+            bindButton('btn-start', () => { startGame(); });
+            bindButton('btn-pause', () => { initAudio(); togglePause(); });
+            bindButton('btn-resume', () => { initAudio(); togglePause(); });
+            bindButton('btn-restart-pause', () => { initAudio(); playSound('click'); resetGame(); });
+            bindButton('btn-menu-pause', () => { initAudio(); playSound('click'); returnToMenu(); });
+            bindButton('btn-revive-go', function(e) {
+                const btn = document.getElementById('btn-revive-go');
+                if (btn.disabled) return;
                 initAudio(); playSound('click');
                 if (!revivePlayer()) alert('🔑 钥匙不足或游戏时长不足，无法复活。');
             });
-            document.getElementById('btn-restart-go').addEventListener('click', () => { initAudio();
-                playSound('click');
-                resetGame(); });
-            document.getElementById('btn-menu-go').addEventListener('click', () => { initAudio();
-                playSound('click');
-                returnToMenu(); });
-            document.getElementById('btn-volume').addEventListener('click', () => {
+            bindButton('btn-restart-go', () => { initAudio(); playSound('click'); resetGame(); });
+            bindButton('btn-menu-go', () => { initAudio(); playSound('click'); returnToMenu(); });
+            // 音量按钮
+            bindButton('btn-volume', () => {
                 initAudio();
                 isMuted = !isMuted;
                 document.getElementById('btn-volume').textContent = isMuted ? '🔇' : '🔊';
@@ -3025,9 +3070,9 @@
                         <button class="btn-buy" data-id="${item.id}">购买</button>
                     </div>`;
                 }).join('');
-                // 购买事件（可无限次重复购买）
+                // 【移动端适配】购买按钮绑定：touchstart优先 + click兼容
                 container.querySelectorAll('.btn-buy').forEach(btn => {
-                    btn.addEventListener('click', () => {
+                    const buyHandler = () => {
                         const item = SHOP_ITEMS.find(i => i.id === btn.dataset.id);
                         if (item && totalCoins >= item.cost) {
                             totalCoins -= item.cost;
@@ -3038,23 +3083,28 @@
                             updateInventoryPanel();
                             playSound('powerup');
                         }
-                    });
+                    };
+                    btn.addEventListener('touchstart', (e) => { e.stopPropagation(); buyHandler(); }, { passive: true });
+                    btn.addEventListener('click', buyHandler);
                 });
             }
 
-            document.getElementById('btn-shop').addEventListener('click', () => {
+            // 【移动端适配】商城入口/关闭按钮：双向绑定
+            bindButton('btn-shop', () => {
                 initAudio(); playSound('click');
                 renderShop();
                 document.getElementById('shop-modal').classList.remove('hidden');
             });
-            document.getElementById('btn-close-shop').addEventListener('click', () => {
+            bindButton('btn-close-shop', () => {
                 document.getElementById('shop-modal').classList.add('hidden');
             });
-            // 点击弹窗背景关闭
-            document.getElementById('shop-modal').addEventListener('click', (e) => {
-                if (e.target === e.currentTarget) {
-                    document.getElementById('shop-modal').classList.add('hidden');
-                }
+            // 点击弹窗背景关闭（兼容触摸穿透）
+            const shopModal = document.getElementById('shop-modal');
+            shopModal.addEventListener('touchstart', (e) => {
+                if (e.target === e.currentTarget) shopModal.classList.add('hidden');
+            }, { passive: true });
+            shopModal.addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) shopModal.classList.add('hidden');
             });
 
             // ==================== 角色定制系统 ====================
@@ -3065,7 +3115,8 @@
                         data-id="${p.id}" title="${p.name}">${p.icon}</div>`
                 ).join('');
                 container.querySelectorAll('.char-preset').forEach(el => {
-                    el.addEventListener('click', () => {
+                    // 【移动端适配】角色预设：touchstart优先+click兼容
+                    const presetHandler = () => {
                         selectedCharPreset = el.dataset.id;
                         const preset = CHAR_PRESETS.find(p => p.id === selectedCharPreset);
                         charConfig = { body: preset.body, hat: preset.hat, shoe: preset.shoe };
@@ -3075,28 +3126,32 @@
                         savePersistentData();
                         applyCharConfig();
                         renderCharCustomizer();
-                    });
+                    };
+                    el.addEventListener('touchstart', (e) => { e.stopPropagation(); presetHandler(); }, { passive: true });
+                    el.addEventListener('click', presetHandler);
                 });
                 document.getElementById('char-body-color').value = charConfig.body;
                 document.getElementById('char-hat-color').value = charConfig.hat;
                 document.getElementById('char-shoe-color').value = charConfig.shoe;
             }
 
-            document.getElementById('btn-char').addEventListener('click', () => {
+            // 【移动端适配】角色自定义入口/关闭/保存按钮：双向绑定
+            bindButton('btn-char', () => {
                 initAudio(); playSound('click');
                 renderCharCustomizer();
                 document.getElementById('char-modal').classList.remove('hidden');
             });
-            document.getElementById('btn-close-char').addEventListener('click', () => {
+            bindButton('btn-close-char', () => {
                 document.getElementById('char-modal').classList.add('hidden');
             });
-            // 点击弹窗背景关闭
-            document.getElementById('char-modal').addEventListener('click', (e) => {
-                if (e.target === e.currentTarget) {
-                    document.getElementById('char-modal').classList.add('hidden');
-                }
+            const charModal = document.getElementById('char-modal');
+            charModal.addEventListener('touchstart', (e) => {
+                if (e.target === e.currentTarget) charModal.classList.add('hidden');
+            }, { passive: true });
+            charModal.addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) charModal.classList.add('hidden');
             });
-            document.getElementById('btn-save-char').addEventListener('click', () => {
+            bindButton('btn-save-char', () => {
                 charConfig.body = document.getElementById('char-body-color').value;
                 charConfig.hat = document.getElementById('char-hat-color').value;
                 charConfig.shoe = document.getElementById('char-shoe-color').value;
@@ -3139,11 +3194,10 @@
                         <span class="inv-count">${count}</span>
                     </div>`;
                 }).join('');
-                // 点击使用道具
+                // 【移动端适配】道具使用：touchstart优先响应
                 container.querySelectorAll('.inv-item:not(.empty)').forEach(el => {
-                    el.addEventListener('click', () => {
-                        useInventoryItem(el.dataset.type);
-                    });
+                    el.addEventListener('touchstart', (e) => { e.stopPropagation(); useInventoryItem(el.dataset.type); }, { passive: true });
+                    el.addEventListener('click', () => { useInventoryItem(el.dataset.type); });
                 });
             }
 
