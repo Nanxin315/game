@@ -724,7 +724,7 @@
             <div class="score-text" id="go-score">得分：0</div>
             <div class="score-text" id="go-distance">距离：0m</div>
             <div class="record-text hidden" id="go-record">🎉 新纪录！</div>
-            <button class="btn btn-restart" id="btn-revive-go" style="background:#ff6b6b;color:#fff;">🔑 消耗5把钥匙复活</button>
+            <button class="btn btn-restart" id="btn-revive-go" style="background:#ff6b6b;color:#fff;">🔑 消耗2把钥匙复活</button>
             <button class="btn btn-restart" id="btn-restart-go">🔄 再来一次</button>
             <button class="btn btn-menu" id="btn-menu-go">🏠 返回主菜单</button>
         </div>
@@ -809,6 +809,9 @@
             let lastThemeSwitchZ = 0;
             let spawnTimer = 0;
             let spawnInterval = 1.0;
+            let lastSpawnZ = 0;
+            let lastSpawnWasObstacle = false;
+            let dynamicDifficulty = 0; // 路程联动动态难度（0~1）
             let gameTime = 0;
             let isMuted = false;
             let globalGain = 0.5;
@@ -816,6 +819,38 @@
             let bgMusicInterval = null;
             let bgMusicBPM = 120;
             let bgMusicNoteIndex = 0;
+            let btThrottle = 0;
+            let jetCoinTimer = 0;
+            // 性能优化：预缓存常量与DOM引用
+            const LANES = [-1.5, 0, 1.5];
+            const GRAVITY = -16;
+            const isMobileDevice = window.innerWidth <= 768;
+            const WORLD_ITEM_CAP = isMobileDevice ? 45 : 60;
+            const PARTICLE_CAP = isMobileDevice ? 18 : 25;
+            const domHud = document.getElementById('hud');
+            const domHudScore = document.getElementById('hud-score');
+            const domHudDistance = document.getElementById('hud-distance');
+            const domHudCombo = document.getElementById('hud-combo');
+            const domPowerupSlots = document.getElementById('powerup-slots');
+            const domMenuScreen = document.getElementById('menu-screen');
+            const domPauseOverlay = document.getElementById('pause-overlay');
+            const domGameoverOverlay = document.getElementById('gameover-overlay');
+            const domGoScore = document.getElementById('go-score');
+            const domGoDistance = document.getElementById('go-distance');
+            const domGoRecord = document.getElementById('go-record');
+            const domReviveBtn = document.getElementById('btn-revive-go');
+            const domBottomTimerBar = document.getElementById('bottom-timer-bar');
+            const domBottomTimerItems = document.getElementById('bottom-timer-items');
+            const domMobileHint = document.getElementById('mobile-hint');
+            const domUiLayer = document.getElementById('ui-layer');
+            const domInvPanel = document.getElementById('inventory-panel');
+            const domInvItems = document.getElementById('inv-items');
+            const domShopBalance = document.getElementById('shop-balance');
+            const domShopItems = document.getElementById('shop-items');
+            const domMenuHighscore = document.getElementById('menu-highscore');
+            const domMenuMaxdist = document.getElementById('menu-maxdist');
+            const domMenuTotalcoins = document.getElementById('menu-totalcoins');
+            const domMenuPlays = document.getElementById('menu-plays');
 
             // ==================== 持久化数据：库存/商城/角色/统计 ====================
             let totalCoins = parseInt(localStorage.getItem('subwayTotalCoins') || '0');
@@ -844,6 +879,7 @@
                 { id: 'jetpack', name: '🚀 喷气背包', desc: '50%移速加成+飞行，持续4秒', cost: 200, icon: '🚀' },
                 { id: 'keys', name: '🔑 钥匙', desc: '1把钥匙=1次游戏次数', cost: 200, icon: '🔑' },
             ];
+            const SHOP_MAP = new Map(SHOP_ITEMS.map(item => [item.id, item]));
             // 道具效果激活状态（库存使用后生效）
             let activeInventoryEffect = null; // { type, timer }
             const INVENTORY_DURATIONS = { headStart: 10, skate: 8, magnet: 5, jetpack: 4 };
@@ -909,7 +945,7 @@
                     doubleJumpAvailable = true;
                 }
                 playSound('powerup');
-                spawnFloatText(actualX, playerY + 2, playerGroup.position.z, '使用 ' + SHOP_ITEMS.find(i => i.id === type).name, '#00ff88');
+                spawnFloatText(actualX, playerY + 2, playerGroup.position.z, '使用 ' + SHOP_MAP.get(type).name, '#00ff88');
             }
 
             // ==================== Three.js 初始化 ====================
@@ -918,11 +954,15 @@
             const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.3, 200);
             camera.position.set(0, 3.5, -8);
 
-            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            const renderer = new THREE.WebGLRenderer({ antialias: !isMobileDevice, alpha: false, powerPreference: "high-performance" });
             renderer.setSize(container.clientWidth, container.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-            renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFShadowMap;
+            // 移动端降级像素比，减轻GPU填充率压力
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.0 : 1.5));
+            // 移动端关闭阴影大幅提升帧率；桌面端使用低分辨率阴影
+            renderer.shadowMap.enabled = !isMobileDevice;
+            if (!isMobileDevice) {
+                renderer.shadowMap.type = THREE.PCFShadowMap;
+            }
             // 关闭色调映射，减少GPU后处理开销
             renderer.toneMapping = THREE.NoToneMapping;
             container.appendChild(renderer.domElement);
@@ -1397,7 +1437,7 @@
 
                 // 三条清晰双铁轨（每轨左右双钢轨，取消内层轨枕以降低draw call）
                 const railGauge = 0.28;
-                [-1.5, 0, 1.5].forEach(laneX => {
+                LANES.forEach(laneX => {
                     // 轨道碎石路基
                     const railBed = new THREE.Mesh(
                         new THREE.BoxGeometry(1.0, 0.04, length),
@@ -1454,7 +1494,7 @@
                 }
 
                 // 坡道+火车顶场景：在对应z区间生成梯子/平台
-                const rampCycle = 800;
+                const rampCycle = getRampCycle(); // 动态坡道周期
                 const segStartCycle = ((startZ % rampCycle) + rampCycle) % rampCycle;
                 const segEndCycle = ((endZ % rampCycle) + rampCycle) % rampCycle;
                 // 上坡梯子（600-630区间）
@@ -1508,9 +1548,14 @@
                 return segment;
             }
 
+            // 路程联动动态地形周期：越远地形越密（800→650）
+            function getRampCycle() {
+                return 800 - dynamicDifficulty * 150;
+            }
+
             // 坡道+火车顶地面高度查询
             function getGroundHeight(z) {
-                const rampCycle = 800; // 每800单位一个坡道周期
+                const rampCycle = getRampCycle(); // 动态坡道周期
                 const cycleZ = ((z % rampCycle) + rampCycle) % rampCycle;
                 // 前600单位：平地
                 if (cycleZ < 600) return 0;
@@ -1523,34 +1568,33 @@
                 return 0;
             }
 
+            // 轨道段快速索引（Set替代Array.some，O(1)查找）
+            const trackSegmentKeys = new Set();
+            const SEG_LENGTH = 24;
+
             function ensureTrackSegments(playerZ) {
-                const segLength = 24;
-                let needSegments = [];
                 const minZ = playerZ - 15;
                 const maxZ = playerZ + 35;
 
-                // 检查需要哪些段
-                let checkZ = Math.floor(minZ / segLength) * segLength;
+                // 检查需要哪些段（O(1) Set查找）
+                let checkZ = Math.floor(minZ / SEG_LENGTH) * SEG_LENGTH;
                 while (checkZ < maxZ) {
-                    const exists = trackSegments.some(s => Math.abs(s.startZ - checkZ) < 1);
-                    if (!exists) {
-                        needSegments.push({ startZ: checkZ, endZ: checkZ + segLength });
+                    const key = checkZ;
+                    if (!trackSegmentKeys.has(key)) {
+                        trackSegmentKeys.add(key);
+                        const seg = createTrackSegment(checkZ, checkZ + SEG_LENGTH, currentTheme);
+                        seg.userData = { startZ: checkZ, endZ: checkZ + SEG_LENGTH };
+                        scene.add(seg);
+                        trackSegments.push(seg);
                     }
-                    checkZ += segLength;
+                    checkZ += SEG_LENGTH;
                 }
-
-                // 创建需要的段
-                needSegments.forEach(ns => {
-                    const seg = createTrackSegment(ns.startZ, ns.endZ, currentTheme);
-                    seg.userData = { startZ: ns.startZ, endZ: ns.endZ };
-                    scene.add(seg);
-                    trackSegments.push(seg);
-                });
 
                 // 移除落后太多的段
                 for (let i = trackSegments.length - 1; i >= 0; i--) {
                     const seg = trackSegments[i];
                     if (seg.userData.endZ < playerZ - 20) {
+                        trackSegmentKeys.delete(seg.userData.startZ);
                         scene.remove(seg);
                         disposeGroup(seg);
                         trackSegments.splice(i, 1);
@@ -1837,15 +1881,62 @@
                 return group;
             }
 
+            // 获取当前关卡（基于距离，每400米一关）
+            function getCurrentLevel() {
+                return Math.floor(distance / 400) + 1;
+            }
+
+            // 路程联动动态难度（0→1平滑递增，~3000米封顶）
+            function updateDynamicDifficulty() {
+                dynamicDifficulty = Math.min(distance / 3000, 1.0);
+            }
+
+            // 检查指定位置附近是否存在障碍物（最高优先级约束）
+            function hasNearbyObstacle(x, z, minGap) {
+                const checkRange = minGap + 4; // 仅扫描Z轴相关范围内的物品
+                for (const item of worldItems) {
+                    const ud = item.userData;
+                    if (!ud.type || ud.type === 'coin' || ud.type === 'powerup') continue;
+                    const iz = ud.z !== undefined ? ud.z : item.position.z;
+                    // Z轴快速剔除
+                    if (Math.abs(z - iz) > checkRange) continue;
+                    const ix = ud.x !== undefined ? ud.x : item.position.x;
+                    // 仅检查同轨道
+                    if (Math.abs(ix - x) > 0.55) continue;
+                    // 计算该障碍物的Z轴跨度：minGap必须扣除障碍物自身深度
+                    const itemHalfDepth = (ud.depth || 1.5) / 2;
+                    if (Math.abs(z - iz) < minGap + itemHalfDepth) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             function spawnWorldItem(playerZ) {
                 const minZ = playerZ + 15;
                 const maxZ = playerZ + 28;
                 const z = minZ + Math.random() * (maxZ - minZ);
-                const gY = getGroundHeight(z); // 地形抬高量
-                const lanes = [-1.5, 0, 1.5];
-                const numItems = 2 + Math.floor(Math.random() * 3);
+                const lanes = LANES;
 
+                // 关卡感知障碍物密度控制（第2关起生效）
+                const level = getCurrentLevel();
+                // levelFactor: 第1关=1.0, 第2关=0.82, 第3关=0.68, 最低0.38
+                const levelFactor = level >= 2 ? Math.max(0.38, 1.0 - (level - 1) * 0.09) : 1.0;
+                // 最小安全间距（中心到中心）：关卡越高间距越大（6~9单位），始终>障碍物自身深度
+                const minSpacing = 5.5 + level * 0.25;
+
+                // 强制安全间距：扫描已存在障碍物，若本轮Z位置附近已有障碍则直接跳过
+                if (lastSpawnWasObstacle && Math.abs(z - lastSpawnZ) < minSpacing) {
+                    return;
+                }
+
+                const numItems = 2 + Math.floor(Math.random() * 3);
                 const usedLanes = new Set();
+                let obstacleCount = 0;
+
+                // 关卡越高，金币占比越大（用金币填充原本障碍物的位置）
+                const coinRate = 0.55 + (level >= 2 ? (1 - levelFactor) * 0.35 : 0);
+
                 for (let i = 0; i < numItems; i++) {
                     const availableLanes = lanes.filter(l => !usedLanes.has(l));
                     if (availableLanes.length === 0) break;
@@ -1853,38 +1944,56 @@
                     usedLanes.add(lane);
 
                     const rand = Math.random();
-                    if (rand < 0.55) {
-                        // 金币（55%），大幅提升密度。其中30%生成弧形金币路径
+                    if (rand < coinRate) {
+                        // 金币
                         if (Math.random() < 0.30) {
                             createCoinArc(lane, z);
                         } else {
-                            // 生成密集金币串（3-5枚）
                             const coinCount = 3 + Math.floor(Math.random() * 3);
                             for (let ci = 0; ci < coinCount; ci++) {
                                 createCoin(lane, z + ci * 0.6 + (Math.random() - 0.5) * 0.3, 0.55);
                             }
                         }
-                    } else if (rand < 0.70) {
-                        // 列车（15%）
-                        const hasTop = Math.random() < 0.35;
-                        createTrain(lane, z, hasTop);
-                        if (hasTop && Math.random() < 0.4 && availableLanes.length > 1) {
-                            const otherLanes = lanes.filter(l => l !== lane);
-                            const ol = otherLanes[Math.floor(Math.random() * otherLanes.length)];
-                            if (!usedLanes.has(ol)) { usedLanes.add(ol); createLowObstacle(ol, z + 1.2); }
+                    } else if (rand < coinRate + 0.15 * levelFactor) {
+                        // 列车：生成前检查该轨道是否有邻近障碍物
+                        if (!hasNearbyObstacle(lane, z, minSpacing)) {
+                            const hasTop = Math.random() < 0.35;
+                            createTrain(lane, z, hasTop);
+                            obstacleCount++;
+                            if (hasTop && Math.random() < 0.4 && availableLanes.length > 1) {
+                                const otherLanes = lanes.filter(l => l !== lane);
+                                const ol = otherLanes[Math.floor(Math.random() * otherLanes.length)];
+                                if (!usedLanes.has(ol) && !hasNearbyObstacle(ol, z + 1.2, minSpacing)) {
+                                    usedLanes.add(ol);
+                                    createLowObstacle(ol, z + 1.2);
+                                    obstacleCount++;
+                                }
+                            }
                         }
-                    } else if (rand < 0.80) {
-                        createHighObstacle(lane, z);
-                    } else if (rand < 0.88) {
-                        createLowObstacle(lane, z);
-                    } else if (rand < 0.93) {
-                        createHurdle(lane, z);
+                    } else if (rand < coinRate + (0.15 + 0.10) * levelFactor) {
+                        if (!hasNearbyObstacle(lane, z, minSpacing)) {
+                            createHighObstacle(lane, z);
+                            obstacleCount++;
+                        }
+                    } else if (rand < coinRate + (0.15 + 0.10 + 0.08) * levelFactor) {
+                        if (!hasNearbyObstacle(lane, z, minSpacing)) {
+                            createLowObstacle(lane, z);
+                            obstacleCount++;
+                        }
+                    } else if (rand < coinRate + (0.15 + 0.10 + 0.08 + 0.05) * levelFactor) {
+                        if (!hasNearbyObstacle(lane, z, minSpacing)) {
+                            createHurdle(lane, z);
+                            obstacleCount++;
+                        }
                     } else {
                         const powerTypes = ['magnet', 'doubleScore', 'jetpack', 'skate'];
                         const pt2 = powerTypes[Math.floor(Math.random() * powerTypes.length)];
                         createPowerUp(lane, z, pt2);
                     }
                 }
+
+                lastSpawnZ = z;
+                lastSpawnWasObstacle = obstacleCount > 0;
             }
 
             // ==================== 警察模型 ====================
@@ -2027,7 +2136,7 @@
                 div.className = 'float-text';
                 div.textContent = text;
                 div.style.color = color;
-                document.getElementById('ui-layer').appendChild(div);
+                domUiLayer.appendChild(div);
                 const floatData = { element: div, worldPos: new THREE.Vector3(x, y, z), age: 0, life: 0.8 };
                 floatTexts.push(floatData);
                 setTimeout(() => {
@@ -2133,9 +2242,14 @@
             function checkCollisions() {
                 const playerAABB = getPlayerAABB();
                 const isInvincible = activePowerUps.jetpack && activePowerUps.jetpack > 0;
+                const pz = playerGroup.position.z;
+                const collisionRange = 5; // 仅检测玩家前后5单位内的物品
 
                 for (const item of worldItems) {
                     if (item.userData.collected) continue;
+                    const iz = item.userData.z !== undefined ? item.userData.z : item.position.z;
+                    // 距离裁剪：跳过远离玩家的物品
+                    if (Math.abs(iz - pz) > collisionRange) continue;
                     const itemAABB = getItemAABB(item);
                     if (!aabbOverlap(playerAABB, itemAABB)) continue;
 
@@ -2218,12 +2332,15 @@
                     }
                 }
 
-                // 磁铁吸附（大范围+高速+Y轴+近距离自动拾取）
+                // 磁铁吸附（大范围+高速+Y轴+近距离自动拾取，远距离裁剪）
                 if (activePowerUps.magnet && activePowerUps.magnet > 0) {
                     const magRange = 7;
+                    const magCullRange = 10; // 超过此距离的跳过吸附计算
                     const autoCollectDist = 0.45;
                     for (const item of worldItems) {
                         if (item.userData.type === 'coin' && !item.userData.collected) {
+                            const miz = item.userData.z !== undefined ? item.userData.z : item.position.z;
+                            if (Math.abs(miz - pz) > magCullRange) continue;
                             const dx = actualX - item.position.x;
                             const dy = (playerY + 0.6) - item.position.y;
                             const dz = playerGroup.position.z - item.position.z;
@@ -2390,9 +2507,9 @@
             }
 
             function revivePlayer() {
-                if (getTotalPlays() < 5 || gameSnapshots.length === 0) return false;
-                // 消耗5次游戏次数（优先扣免费次数，再扣钥匙库存）
-                for (let i = 0; i < 5; i++) consumePlay();
+                if (getTotalPlays() < 2 || gameSnapshots.length === 0) return false;
+                // 消耗2次游戏次数（优先扣免费次数，再扣钥匙库存）
+                for (let i = 0; i < 2; i++) consumePlay();
                 savePersistentData();
                 // 恢复到约15秒前的快照（每1.5s一个快照，10个≈15秒）
                 const rewindCount = Math.min(10, gameSnapshots.length - 1);
@@ -2426,6 +2543,7 @@
                 // 重建轨道段
                 for (const seg of trackSegments) { scene.remove(seg); disposeGroup(seg); }
                 trackSegments = [];
+                trackSegmentKeys.clear();
                 ensureTrackSegments(playerGroup.position.z);
                 // 重置警察位置（推到远处）+ 30秒复活保护
                 policeActive = false; policeTimer = 0;
@@ -2435,11 +2553,16 @@
                 // 重置死亡状态
                 isDying = false; deathTimer = 0; isStaggered = false; staggerTimer = 0;
                 playerGroup.visible = true;
+                // 重置生成追踪（保留动态难度，复活不重置）
+                lastSpawnZ = playerGroup.position.z;
+                lastSpawnWasObstacle = false;
+                btThrottle = 0;
+                jetCoinTimer = 0;
                 // 恢复游戏
                 gameState = GAME_STATES.PLAYING;
-                document.getElementById('gameover-overlay').classList.add('hidden');
-                document.getElementById('hud').classList.remove('hidden');
-                document.getElementById('bottom-timer-bar').classList.add('hidden');
+                domGameoverOverlay.classList.add('hidden');
+                domHud.classList.remove('hidden');
+                domBottomTimerBar.classList.add('hidden');
                 updateMenuStats();
                 updateInventoryPanel();
                 updateHUD();
@@ -2486,35 +2609,35 @@
                 updateBottomTimer();
                 updateMenuStats();
                 // 显示结束界面（复活按钮始终显示，总次数不足时置灰）
-                const reviveBtn = document.getElementById('btn-revive-go');
+                const reviveBtn = domReviveBtn;
                 const totalPlays = getTotalPlays();
-                const canRevive = totalPlays >= 5 && gameSnapshots.length >= 10;
+                const canRevive = totalPlays >= 2 && gameSnapshots.length >= 10;
                 reviveBtn.style.display = '';
                 if (canRevive) {
                     reviveBtn.disabled = false;
                     reviveBtn.style.opacity = '1';
                     reviveBtn.style.cursor = 'pointer';
-                    reviveBtn.textContent = '🔑 消耗5次游戏次数复活（剩余' + totalPlays + '次）';
+                    reviveBtn.textContent = '🔑 消耗2次游戏次数复活（剩余' + totalPlays + '次）';
                 } else {
                     reviveBtn.disabled = true;
                     reviveBtn.style.opacity = '0.5';
                     reviveBtn.style.cursor = 'not-allowed';
-                    const reason = totalPlays < 5 ? '次数不足' : '游戏时长不足';
-                    reviveBtn.textContent = '🔑 消耗5次游戏次数复活（' + reason + '）';
+                    const reason = totalPlays < 2 ? '次数不足' : '游戏时长不足';
+                    reviveBtn.textContent = '🔑 消耗2次游戏次数复活（' + reason + '）';
                 }
-                document.getElementById('gameover-overlay').classList.remove('hidden');
-                document.getElementById('go-score').textContent = '💰 得分：' + score;
-                document.getElementById('go-distance').textContent = '📏 距离：' + Math.floor(distance) + 'm';
-                const recordEl = document.getElementById('go-record');
+                domGameoverOverlay.classList.remove('hidden');
+                domGoScore.textContent = '💰 得分：' + score;
+                domGoDistance.textContent = '📏 距离：' + Math.floor(distance) + 'm';
+                const recordEl = domGoRecord;
                 if (isNewRecord) {
                     recordEl.classList.remove('hidden');
                     recordEl.textContent = '🎉 新纪录！' + highScore + ' 分';
                 } else {
                     recordEl.classList.add('hidden');
                 }
-                document.getElementById('hud').classList.add('hidden');
-                document.getElementById('pause-overlay').classList.add('hidden');
-                document.getElementById('bottom-timer-bar').classList.add('hidden');
+                domHud.classList.add('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domBottomTimerBar.classList.add('hidden');
             }
 
             function resetGame() {
@@ -2541,6 +2664,9 @@
                 policeSpeed = 7;
                 spawnTimer = 0;
                 spawnInterval = 1.0;
+                lastSpawnZ = 0;
+                lastSpawnWasObstacle = false;
+                dynamicDifficulty = 0;
                 gameTime = 0;
                 currentTheme = 0;
                 lastThemeSwitchZ = 0;
@@ -2585,6 +2711,7 @@
                     disposeGroup(seg);
                 }
                 trackSegments = [];
+                trackSegmentKeys.clear();
                 // 重置警察
                 if (police) {
                     scene.remove(police);
@@ -2595,15 +2722,17 @@
                 ensureTrackSegments(0);
                 // 更新UI
                 updateHUD();
-                document.getElementById('powerup-slots').innerHTML = '';
-                document.getElementById('hud-combo').textContent = '';
-                document.getElementById('gameover-overlay').classList.add('hidden');
-                document.getElementById('pause-overlay').classList.add('hidden');
-                document.getElementById('menu-screen').classList.add('hidden');
-                document.getElementById('hud').classList.remove('hidden');
-                document.getElementById('mobile-hint').style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
+                domPowerupSlots.innerHTML = '';
+                domHudCombo.textContent = '';
+                domGameoverOverlay.classList.add('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domMenuScreen.classList.add('hidden');
+                domHud.classList.remove('hidden');
+                domMobileHint.style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
                 gameState = GAME_STATES.PLAYING;
                 updateInventoryPanel(); // gameState变更后刷新库存面板
+                btThrottle = 0;
+                jetCoinTimer = 0;
                 stopBgMusic();
                 startBgMusic();
                 if (police) {
@@ -2638,6 +2767,7 @@
                     disposeGroup(seg);
                 }
                 trackSegments = [];
+                trackSegmentKeys.clear();
                 if (police) {
                     scene.remove(police);
                     disposeGroup(police);
@@ -2664,20 +2794,20 @@
                 speed = BASE_SPEED;
                 comboCount = 0;
                 ensureTrackSegments(0);
-                document.getElementById('menu-screen').classList.remove('hidden');
-                document.getElementById('hud').classList.add('hidden');
-                document.getElementById('pause-overlay').classList.add('hidden');
-                document.getElementById('gameover-overlay').classList.add('hidden');
+                domMenuScreen.classList.remove('hidden');
+                domHud.classList.add('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domGameoverOverlay.classList.add('hidden');
                 updateMenuStats();
                 updateBottomTimer();
-                document.getElementById('bottom-timer-bar').classList.add('hidden');
+                domBottomTimerBar.classList.add('hidden');
                 updateHUD();
             }
 
             function updateHUD() {
-                document.getElementById('hud-score').textContent = '💰 ' + score;
-                document.getElementById('hud-distance').textContent = '📏 ' + Math.floor(distance) + 'm';
-                const comboEl = document.getElementById('hud-combo');
+                domHudScore.textContent = '💰 ' + score;
+                domHudDistance.textContent = '📏 ' + Math.floor(distance) + 'm';
+                const comboEl = domHudCombo;
                 if (comboCount >= 2 && gameTime - lastCollectTime < 1.5) {
                     comboEl.textContent = '🔥 x' + comboCount;
                     comboEl.style.transform = 'scale(1.1)';
@@ -2689,7 +2819,7 @@
                     comboEl.textContent = '';
                 }
                 // 道具栏
-                const slotsEl = document.getElementById('powerup-slots');
+                const slotsEl = domPowerupSlots;
                 let html = '';
                 const powerInfo = [
                     { key: 'magnet', icon: '🧲', name: '磁铁', barClass: 'bar-magnet' },
@@ -2810,13 +2940,13 @@
             function togglePause() {
                 if (gameState === GAME_STATES.PLAYING) {
                     gameState = GAME_STATES.PAUSED;
-                    document.getElementById('pause-overlay').classList.remove('hidden');
-                    document.getElementById('hud').classList.add('hidden');
+                    domPauseOverlay.classList.remove('hidden');
+                    domHud.classList.add('hidden');
                     stopBgMusic();
                 } else if (gameState === GAME_STATES.PAUSED) {
                     gameState = GAME_STATES.PLAYING;
-                    document.getElementById('pause-overlay').classList.add('hidden');
-                    document.getElementById('hud').classList.remove('hidden');
+                    domPauseOverlay.classList.add('hidden');
+                    domHud.classList.remove('hidden');
                     startBgMusic();
                 }
                 playSound('click');
@@ -2833,10 +2963,10 @@
                 consumePlay();
                 resetGame();
                 gameState = GAME_STATES.PLAYING;
-                document.getElementById('menu-screen').classList.add('hidden');
-                document.getElementById('hud').classList.remove('hidden');
-                document.getElementById('pause-overlay').classList.add('hidden');
-                document.getElementById('gameover-overlay').classList.add('hidden');
+                domMenuScreen.classList.add('hidden');
+                domHud.classList.remove('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domGameoverOverlay.classList.add('hidden');
                 ensureTrackSegments(0);
                 if (!police) {
                     police = createPolice();
@@ -2881,8 +3011,8 @@
 
             // ==================== 商城系统 ====================
             function renderShop() {
-                document.getElementById('shop-balance').textContent = totalCoins;
-                const container = document.getElementById('shop-items');
+                domShopBalance.textContent = totalCoins;
+                const container = domShopItems;
                 container.innerHTML = SHOP_ITEMS.map(item => {
                     return `<div class="shop-item">
                         <div class="item-icon">${item.icon}</div>
@@ -2987,18 +3117,18 @@
 
             // ==================== 菜单统计更新 ====================
             function updateMenuStats() {
-                document.getElementById('menu-highscore').textContent = highScore;
-                document.getElementById('menu-maxdist').textContent = maxDistance;
-                document.getElementById('menu-totalcoins').textContent = totalCoins;
-                document.getElementById('menu-plays').textContent = getTotalPlays();
+                domMenuHighscore.textContent = highScore;
+                domMenuMaxdist.textContent = maxDistance;
+                domMenuTotalcoins.textContent = totalCoins;
+                domMenuPlays.textContent = getTotalPlays();
             }
 
             // ==================== 道具库存面板 ====================
             function updateInventoryPanel() {
-                const panel = document.getElementById('inventory-panel');
+                const panel = domInvPanel;
                 if (gameState !== GAME_STATES.PLAYING) { panel.classList.add('hidden'); return; }
                 panel.classList.remove('hidden');
-                const container = document.getElementById('inv-items');
+                const container = domInvItems;
                 // 过滤掉钥匙（钥匙仅用于复活，非战斗中道具）
                 const battleItems = SHOP_ITEMS.filter(item => item.id !== 'keys');
                 container.innerHTML = battleItems.map(item => {
@@ -3019,8 +3149,8 @@
 
             // ==================== 底部道具计时条 ====================
             function updateBottomTimer() {
-                const bar = document.getElementById('bottom-timer-bar');
-                const items = document.getElementById('bottom-timer-items');
+                const bar = domBottomTimerBar;
+                const items = domBottomTimerItems;
                 let hasActive = false;
                 let html = '';
                 const powerInfo = [
@@ -3043,7 +3173,7 @@
                 // 库存激活效果
                 if (activeInventoryEffect) {
                     hasActive = true;
-                    const invItem = SHOP_ITEMS.find(i => i.id === activeInventoryEffect.type);
+                    const invItem = SHOP_MAP.get(activeInventoryEffect.type);
                     const colorMap = { headStart: '#ff8844', skate: '#51cf66', magnet: '#4dc9f6', jetpack: '#ff6b6b' };
                     const maxMap = { headStart: 10, skate: 8, magnet: 5, jetpack: 4 };
                     html += `<div class="bottom-timer-item">
@@ -3060,18 +3190,22 @@
                 }
             }
 
-            // ==================== 窗口调整 ====================
+            // ==================== 窗口调整（防抖优化） ====================
+            let resizeTimeout;
             window.addEventListener('resize', () => {
-                camera.aspect = container.clientWidth / container.clientHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(container.clientWidth, container.clientHeight);
-                const isMobile = window.innerWidth <= 768;
-                document.getElementById('mobile-hint').style.opacity = isMobile ? '0.6' : '0.35';
+                if (resizeTimeout) clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    camera.aspect = container.clientWidth / container.clientHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(container.clientWidth, container.clientHeight);
+                    domMobileHint.style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
+                }, 150);
             });
 
             // ==================== 游戏循环 ====================
             let lastTime = performance.now();
-            let cameraTargetPos = new THREE.Vector3(0, 3.5, -8);
+            const cameraTargetPos = new THREE.Vector3(0, 3.5, -8);
+            const _lookTarget = new THREE.Vector3();
 
             function update(deltaTime) {
                 if (gameState !== GAME_STATES.PLAYING) return;
@@ -3116,7 +3250,7 @@
                 playerGroup.position.x = actualX;
 
                 // 跳跃物理（适配斜坡地形）
-                const gravity = -16;
+                const gravity = GRAVITY;
                 const groundY = getGroundHeight(playerGroup.position.z);
                 if (isJumping) {
                     verticalVelocity += gravity * deltaTime;
@@ -3171,23 +3305,27 @@
                 // 道具更新
                 updatePowerUps(deltaTime);
 
-                // 生成物品
+                // 生成物品（路程联动动态难度：小幅提升刷新频率）
                 spawnTimer += deltaTime;
+                updateDynamicDifficulty();
                 const minInterval = 0.35;
                 const maxInterval = 1.0;
                 const distFactor = Math.min(distance / 2000, 1);
                 spawnInterval = maxInterval - (maxInterval - minInterval) * distFactor;
-                if (spawnTimer >= spawnInterval + Math.random() * 0.3) {
+                // 动态难度加持：最高缩短15%间隔，但永远不低于安全下限
+                spawnInterval *= (1 - dynamicDifficulty * 0.15);
+                spawnInterval = Math.max(spawnInterval, 0.28);
+                if (spawnTimer >= spawnInterval + Math.random() * 0.25) {
                     spawnTimer = 0;
                     spawnWorldItem(playerGroup.position.z);
                 }
                 // 喷气背包状态下额外生成空中金币（每0.6秒一批）
                 if (activePowerUps.jetpack && activePowerUps.jetpack > 0) {
-                    if (!window._jetCoinTimer) window._jetCoinTimer = 0;
-                    window._jetCoinTimer += deltaTime;
-                    if (window._jetCoinTimer > 0.6) {
-                        window._jetCoinTimer = 0;
-                        const jLane = [-1.5, 0, 1.5][Math.floor(Math.random() * 3)];
+                    if (!jetCoinTimer) jetCoinTimer = 0;
+                    jetCoinTimer += deltaTime;
+                    if (jetCoinTimer > 0.6) {
+                        jetCoinTimer = 0;
+                        const jLane = LANES[Math.floor(Math.random() * 3)];
                         const jZ = playerGroup.position.z + 18 + Math.random() * 10;
                         // 空中弧形金币（喷气高度2.0附近）
                         const airCoins = [1.8, 2.1, 2.4, 2.1, 1.8];
@@ -3198,7 +3336,7 @@
                         }
                     }
                 } else {
-                    window._jetCoinTimer = 0;
+                    jetCoinTimer = 0;
                 }
 
                 // 移除远处物品
@@ -3212,8 +3350,11 @@
                     }
                 }
 
-                // 物品动画
+                // 物品动画（远距离物体跳过动画计算）
+                const animRange = 20;
                 for (const item of worldItems) {
+                    const iz = item.userData.z !== undefined ? item.userData.z : item.position.z;
+                    if (Math.abs(iz - playerGroup.position.z) > animRange) continue;
                     if (item.userData.type === 'coin' && !item.userData.collected) {
                         item.position.y = item.userData.baseY + Math.sin(gameTime * 6 + item.userData.floatPhase) * 0.15;
                         item.rotation.z += item.userData.rotSpeed * deltaTime;
@@ -3264,6 +3405,11 @@
                     if (police) police.position.z = policeZ;
                 }
                 if (policeActive && police) {
+                    // 警察距玩家超过40单位时跳过动画/灯光计算
+                    if (playerGroup.position.z - policeZ > 40) {
+                        policeZ += policeSpeed * deltaTime;
+                        police.position.z = policeZ;
+                    } else {
                     const distToPlayer = playerGroup.position.z - policeZ;
                     // 复活保护期间：警察无法抓捕
                     if (reviveProtectionTimer > 0) {
@@ -3274,10 +3420,11 @@
                         police.position.z = policeZ;
                         police.position.y = 0;
                     } else {
-                        // 正常追击：基础速度与玩家持平(BASE_SPEED)，距离近时略快
+                        // 正常追击：基础速度+路程联动动态难度，距离近时略快
                         const chaseFactor = Math.max(1, 6 / Math.max(distToPlayer, 4));
-                        policeSpeed = (BASE_SPEED + distance * 0.003) * chaseFactor;
-                        policeSpeed = Math.min(policeSpeed, BASE_SPEED + 3);
+                        policeSpeed = (BASE_SPEED + distance * 0.003 + dynamicDifficulty * 1.2) * chaseFactor;
+                        // 上限：BASE_SPEED+3.5，低于玩家喷气背包全速(12)，保证加速道具可拉开距离
+                        policeSpeed = Math.min(policeSpeed, BASE_SPEED + 3.5);
                         policeZ += policeSpeed * deltaTime;
                         police.position.z = policeZ;
                     }
@@ -3312,6 +3459,7 @@
                         triggerGameOver();
                         return;
                     }
+                    } // 关闭 else（远距离跳过动画）
                 }
 
                 // 抢先起步计时
@@ -3334,25 +3482,24 @@
                 updateFloatTexts();
 
                 // 限制物品总数（降低上限减少遍历开销）
-                while (worldItems.length > 60) {
+                while (worldItems.length > WORLD_ITEM_CAP) {
                     const oldest = worldItems[0];
                     scene.remove(oldest);
                     disposeGroup(oldest);
                     worldItems.shift();
                 }
-                while (particles.length > 25) {
+                while (particles.length > PARTICLE_CAP) {
                     const op = particles[0];
                     scene.remove(op);
-                    op.geometry.dispose();
-                    op.material.dispose();
+                    // 几何体为共享实例不dispose，材质从缓存中获取也不单独dispose
                     particles.shift();
                 }
 
                 // 更新HUD + 底部计时条（计时条每0.3秒更新，降低DOM操作频率）
                 updateHUD();
-                if (!window._btThrottle) window._btThrottle = 0;
-                window._btThrottle += deltaTime;
-                if (window._btThrottle >= 0.3) { window._btThrottle = 0; updateBottomTimer(); }
+                if (!btThrottle) btThrottle = 0;
+                btThrottle += deltaTime;
+                if (btThrottle >= 0.3) { btThrottle = 0; updateBottomTimer(); }
 
                 // 相机跟随
                 const camTargetX = actualX * 0.5;
@@ -3360,8 +3507,8 @@
                 const camTargetZ = playerGroup.position.z - 8;
                 cameraTargetPos.set(camTargetX, camTargetY, camTargetZ);
                 camera.position.lerp(cameraTargetPos, 0.08);
-                const lookTarget = new THREE.Vector3(actualX * 0.3, 1.0 + playerY, playerGroup.position.z + 2);
-                camera.lookAt(lookTarget);
+                _lookTarget.set(actualX * 0.3, 1.0 + playerY, playerGroup.position.z + 2);
+                camera.lookAt(_lookTarget);
 
                 // 更新动态灯光
                 pointLight1.position.set(0, 3, playerGroup.position.z + 5);
@@ -3369,17 +3516,23 @@
 
             function animate(timestamp) {
                 requestAnimationFrame(animate);
-                const deltaTime = Math.min((timestamp - lastTime) / 1000, 0.1);
+                const rawDt = (timestamp - lastTime) / 1000;
+                // 过短帧跳过，避免无效渲染
+                if (rawDt < 0.005) return;
+                const deltaTime = Math.min(rawDt, 0.1);
                 lastTime = timestamp;
 
                 if (gameState === GAME_STATES.PLAYING) {
                     update(deltaTime);
-                } else if (gameState === GAME_STATES.PAUSED || gameState === GAME_STATES.MENU) {
-                    // 仅渲染，不更新逻辑
-                    updateFloatTexts();
+                } else if (gameState === GAME_STATES.PAUSED) {
+                    // 暂停：仅清理浮动文字，不更新逻辑
+                    if (floatTexts.length > 0) updateFloatTexts();
                 }
+                // MENU状态不渲染（场景完全被菜单遮罩覆盖）
 
-                renderer.render(scene, camera);
+                if (gameState !== GAME_STATES.MENU) {
+                    renderer.render(scene, camera);
+                }
             }
 
             // ==================== 初始化 ====================
@@ -3394,15 +3547,15 @@
                 updateMenuStats();
                 // 移动端检测
                 const isMobile = window.innerWidth <= 768;
-                document.getElementById('mobile-hint').style.opacity = isMobile ? '0.6' : '0.35';
+                domMobileHint.style.opacity = isMobile ? '0.6' : '0.35';
                 if (isMobile) {
-                    document.getElementById('mobile-hint').textContent = '👆 左滑切换轨道 | 右半屏上滑跳跃 / 下滑下蹲';
+                    domMobileHint.textContent = '👆 左滑切换轨道 | 右半屏上滑跳跃 / 下滑下蹲';
                 }
                 // 确保初始状态
-                document.getElementById('menu-screen').classList.remove('hidden');
-                document.getElementById('hud').classList.add('hidden');
-                document.getElementById('pause-overlay').classList.add('hidden');
-                document.getElementById('gameover-overlay').classList.add('hidden');
+                domMenuScreen.classList.remove('hidden');
+                domHud.classList.add('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domGameoverOverlay.classList.add('hidden');
                 gameState = GAME_STATES.MENU;
                 lastTime = performance.now();
                 requestAnimationFrame(animate);
