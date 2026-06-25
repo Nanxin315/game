@@ -30,19 +30,20 @@
             overflow: hidden;
             background: #000;
             font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            /* 【移动端适配·BUG修复】全局禁止所有非按钮区域的触摸交互 */
             touch-action: manipulation;
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
             -webkit-tap-highlight-color: transparent;
-            /* 【移动端适配】禁止长按菜单、文本选择、拖拽滚动溢出 */
             -webkit-overflow-scrolling: none;
             overscroll-behavior: none;
-            -webkit-touch-callout: none;
             -webkit-user-drag: none;
             position: fixed;
             top: 0;
             left: 0;
+            /* 禁止双击缩放 */
+            -ms-touch-action: manipulation;
         }
 
         #game-container {
@@ -52,10 +53,15 @@
             width: 100%;
             height: 100%;
             z-index: 1;
+            pointer-events: none;
+        }
+        #game-container canvas {
+            pointer-events: auto;
         }
 
         canvas {
             display: block;
+            touch-action: none;
         }
 
         /* UI 覆盖层 */
@@ -66,7 +72,7 @@
             width: 100%;
             height: 100%;
             pointer-events: none;
-            z-index: 10;
+            z-index: 100;
         }
 
         #ui-layer>* {
@@ -85,7 +91,7 @@
             align-items: center;
             justify-content: center;
             background: rgba(10, 10, 20, 0.85);
-            z-index: 100;
+            z-index: 200;
             transition: opacity 0.3s;
         }
         #menu-screen.hidden {
@@ -120,6 +126,8 @@
             box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
             text-align: center;
             color: #1a1a2e;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         .btn-play {
             background: var(--yellow);
@@ -288,7 +296,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            z-index: 90;
+            z-index: 300;
             transition: opacity 0.3s;
         }
         .overlay.hidden {
@@ -337,6 +345,8 @@
             transition: transform 0.15s, background 0.2s;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
             color: #1a1a2e;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         .btn-resume {
             background: #4ecb71;
@@ -457,6 +467,8 @@
             background: rgba(255,255,255,0.15); color: #fff;
             transition: transform 0.15s, background 0.2s, box-shadow 0.2s;
             box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         .btn-sm:hover { background: rgba(255,255,255,0.30); transform: scale(1.08); box-shadow: 0 6px 18px rgba(0,0,0,0.4); }
         .btn-sm:active { transform: scale(0.93); }
@@ -469,7 +481,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 120;
+            z-index: 400;
             transition: opacity 0.3s;
         }
         .panel-modal.hidden { opacity: 0; pointer-events: none !important; }
@@ -700,8 +712,8 @@
                 <button class="btn btn-sm" id="btn-char">👤 角色</button>
             </div>
             <div class="controls-info">
-                ←/→ 或 A/D 移动轨道 &nbsp;|&nbsp; ↑ 或 W 跳跃 &nbsp;|&nbsp; ↓ 或 S 下蹲<br>
-                P 暂停 &nbsp;|&nbsp; R 重新开始
+                👈 左滑/右滑 切换轨道 &nbsp;|&nbsp; 👆 上滑跳跃 &nbsp;|&nbsp; 👇 下滑下蹲<br>
+                📱 纯触控操作 | 手机专属
             </div>
         </div>
 
@@ -2581,30 +2593,36 @@
                 return true;
             }
 
+            // ==================== 【移动端适配·BUG修复②】游戏结束流程重写 ====================
             function triggerGameOver() {
                 if (isDying) return;
-                // 先播放死亡动画，延迟弹出结算
+                // ★ 立即终止所有游戏逻辑，防止主线程被游戏循环阻塞
                 isDying = true;
                 deathTimer = 0.8;
                 isStaggered = true;
                 staggerTimer = 0.8;
+                // ★ 立即停止背景音乐和所有定时器
+                stopBgMusic();
+                if (bgMusicInterval) { clearInterval(bgMusicInterval); bgMusicInterval = null; }
+                // 清除所有道具效果（防止死亡后道具继续影响）
+                doubleJumpAvailable = false;
+                activePowerUps = {};
+                activeInventoryEffect = null;
+                skateGroup.visible = false;
+                magnetRing.visible = false;
+                doubleGlow.visible = false;
+                jetFlameGroup.visible = false;
+                headStartTimer = 0;
                 playSound('crash');
                 playSound('gameover');
-                stopBgMusic();
                 // 玩家倒地倾斜
                 playerGroup.rotation.z = 1.2;
                 playerGroup.rotation.x = -0.5;
             }
 
             function finishGameOver() {
+                // ★ 彻底终止游戏主循环逻辑（gameState变更后update()立即跳过）
                 gameState = GAME_STATES.GAMEOVER;
-                // 清除所有道具特效
-                doubleJumpAvailable = false;
-                activePowerUps = {};
-                skateGroup.visible = false;
-                magnetRing.visible = false;
-                doubleGlow.visible = false;
-                jetFlameGroup.visible = false;
                 // 累计金币 + 最高分 + 最远距离
                 totalCoins += score;
                 if (Math.floor(distance) > maxDistance) maxDistance = Math.floor(distance);
@@ -2617,7 +2635,7 @@
                 savePersistentData();
                 updateBottomTimer();
                 updateMenuStats();
-                // 显示结束界面（复活按钮始终显示，总次数不足时置灰）
+                // 显示结束界面
                 const reviveBtn = domReviveBtn;
                 const totalPlays = getTotalPlays();
                 const canRevive = totalPlays >= 2 && gameSnapshots.length >= 10;
@@ -2634,6 +2652,8 @@
                     const reason = totalPlays < 2 ? '次数不足' : '游戏时长不足';
                     reviveBtn.textContent = '🔑 消耗2次游戏次数复活（' + reason + '）';
                 }
+                // ★ 确保结算弹窗在最顶层且可交互
+                domGameoverOverlay.style.zIndex = '500';
                 domGameoverOverlay.classList.remove('hidden');
                 domGoScore.textContent = '💰 得分：' + score;
                 domGoDistance.textContent = '📏 距离：' + Math.floor(distance) + 'm';
@@ -2650,6 +2670,10 @@
             }
 
             function resetGame() {
+                // ★ BUG修复②：强制终止所有异步操作，防止死锁
+                stopBgMusic();
+                if (bgMusicInterval) { clearInterval(bgMusicInterval); bgMusicInterval = null; }
+                // 重置快照
                 gameSnapshots = []; snapshotTimer = 0;
                 reviveProtectionTimer = 0;
                 score = 0;
@@ -2681,12 +2705,12 @@
                 lastThemeSwitchZ = 0;
                 playerGroup.position.set(0, 0, 0);
                 playerGroup.scale.set(1, 1, 1);
-                playerGroup.rotation.set(0, 0, 0); // 重置死亡动画旋转
+                playerGroup.rotation.set(0, 0, 0);
                 skateGroup.visible = false;
                 magnetRing.visible = false;
                 doubleGlow.visible = false;
                 jetFlameGroup.visible = false;
-                // ★ 重置死亡/硬直状态（修复卡死BUG）
+                // ★ BUG修复②：彻底重置死亡/硬直状态
                 isDying = false;
                 deathTimer = 0;
                 isStaggered = false;
@@ -2698,7 +2722,6 @@
                     inventory.headStart--;
                     headStartTimer = 10;
                     savePersistentData();
-                    updateInventoryPanel();
                 }
                 // 清除世界物品
                 for (const item of worldItems) {
@@ -2706,7 +2729,7 @@
                     disposeGroup(item);
                 }
                 worldItems = [];
-                // 清除粒子（共享几何体/材质不dispose）
+                // 清除粒子
                 for (const p of particles) { scene.remove(p); }
                 particles = [];
                 // 清除浮动文字
@@ -2729,37 +2752,42 @@
                 }
                 // 确保初始轨道
                 ensureTrackSegments(0);
+                // 重置天空
+                skyTexture = createSkyTexture(0);
+                scene.background = skyTexture;
+                scene.fog = new THREE.Fog(0x1a2a3a, 25, 80);
                 // 更新UI
                 updateHUD();
                 domPowerupSlots.innerHTML = '';
                 domHudCombo.textContent = '';
+                // ★ BUG修复②：确保所有覆盖层正确隐藏
+                domGameoverOverlay.style.zIndex = '300';
                 domGameoverOverlay.classList.add('hidden');
                 domPauseOverlay.classList.add('hidden');
                 domMenuScreen.classList.add('hidden');
                 domHud.classList.remove('hidden');
                 domMobileHint.style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
+                // ★ BUG修复②：先设置状态再启动音频
                 gameState = GAME_STATES.PLAYING;
-                updateInventoryPanel(); // gameState变更后刷新库存面板
+                updateInventoryPanel();
                 btThrottle = 0;
                 jetCoinTimer = 0;
-                stopBgMusic();
-                startBgMusic();
-                if (police) {
-                    scene.remove(police);
-                    disposeGroup(police);
-                    police = null;
-                }
+                // 重建警察
                 policeZ = -10;
                 policeActive = false;
                 policeTimer = 0;
                 police = createPolice();
                 police.position.set(0, 0, policeZ);
+                // 最后启动音乐
+                if (!isMuted) startBgMusic();
             }
 
             function returnToMenu() {
-                gameState = GAME_STATES.MENU;
+                // ★ BUG修复②：强制终止所有异步操作
                 stopBgMusic();
-                // 清理
+                if (bgMusicInterval) { clearInterval(bgMusicInterval); bgMusicInterval = null; }
+                gameState = GAME_STATES.MENU;
+                // 清理世界物品
                 for (const item of worldItems) {
                     scene.remove(item);
                     disposeGroup(item);
@@ -2782,6 +2810,7 @@
                     disposeGroup(police);
                     police = null;
                 }
+                // 重置玩家位置和状态
                 playerGroup.position.set(0, 0, 0);
                 playerGroup.scale.set(1, 1, 1);
                 playerGroup.rotation.set(0, 0, 0);
@@ -2798,19 +2827,32 @@
                 verticalVelocity = 0;
                 doubleJumpAvailable = false;
                 activePowerUps = {};
+                activeInventoryEffect = null;
+                headStartTimer = 0;
                 score = 0;
                 distance = 0;
                 speed = BASE_SPEED;
                 comboCount = 0;
+                gameTime = 0;
+                lastCollectTime = 0;
+                dynamicDifficulty = 0;
                 ensureTrackSegments(0);
+                // 重置天空
+                skyTexture = createSkyTexture(0);
+                scene.background = skyTexture;
+                scene.fog = new THREE.Fog(0x1a2a3a, 25, 80);
+                // ★ BUG修复②：确保UI状态正确
+                domGameoverOverlay.style.zIndex = '300';
                 domMenuScreen.classList.remove('hidden');
                 domHud.classList.add('hidden');
                 domPauseOverlay.classList.add('hidden');
                 domGameoverOverlay.classList.add('hidden');
+                domBottomTimerBar.classList.add('hidden');
                 updateMenuStats();
                 updateBottomTimer();
-                domBottomTimerBar.classList.add('hidden');
                 updateHUD();
+                domPowerupSlots.innerHTML = '';
+                domHudCombo.textContent = '';
             }
 
             function updateHUD() {
@@ -2849,49 +2891,104 @@
                 slotsEl.innerHTML = html;
             }
 
-            // ==================== 输入处理 ====================
-            const keys = {};
-            window.addEventListener('keydown', (e) => {
-                const gameKeys = ['a', 'd', 'w', 's', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'p', 'r', 'm', 'enter', ' '];
-                const keyLower = e.key.toLowerCase();
-                if (!gameKeys.includes(keyLower) && !gameKeys.includes(e.code?.toLowerCase())) return;
-                e.preventDefault();
-                // P/R/M/Enter/Space 处理
-                if (keyLower === 'p' && (gameState === GAME_STATES.PLAYING || gameState === GAME_STATES.PAUSED)) { togglePause(); return; }
-                if (keyLower === 'r' && gameState === GAME_STATES.GAMEOVER) { resetGame(); return; }
-                if (keyLower === 'm' && gameState === GAME_STATES.GAMEOVER) { returnToMenu(); return; }
-                if (gameState === GAME_STATES.MENU && (keyLower === 'enter' || keyLower === ' ')) { startGame(); return; }
-                if (gameState !== GAME_STATES.PLAYING) return;
-                // 即时响应：左右移动（A/←左移, D/→右移）
-                if ((keyLower === 'a' || keyLower === 'arrowleft') && currentLane < 1) { currentLane++; return; }
-                if ((keyLower === 'd' || keyLower === 'arrowright') && currentLane > -1) { currentLane--; return; }
-                // 即时响应：跳跃
-                if ((keyLower === 'w' || keyLower === 'arrowup') && !isCrouching) {
-                    if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
-                    else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
-                    return;
+            // ==================== 【移动端适配·BUG修复①】全局移动端事件防护 ====================
+            // 禁止页面滚动、双击缩放、长按菜单等浏览器默认行为
+            document.addEventListener('touchmove', function(e) {
+                if (!isInteractiveElement(e.target)) {
+                    e.preventDefault();
                 }
-                // 下蹲：依然用按键状态
-                keys[keyLower] = true;
-                keys[e.code] = true;
-            });
-            window.addEventListener('keyup', (e) => {
-                const keyLower = e.key.toLowerCase();
-                keys[keyLower] = false;
-                keys[e.code] = false;
-                // 松开下蹲键则取消下蹲
-                if ((keyLower === 's' || keyLower === 'arrowdown') && gameState === GAME_STATES.PLAYING && isCrouching) {
-                    isCrouching = false;
+            }, { passive: false });
+
+            document.addEventListener('gesturestart', function(e) {
+                e.preventDefault();
+            }, { passive: false });
+
+            document.addEventListener('gesturechange', function(e) {
+                e.preventDefault();
+            }, { passive: false });
+
+            document.addEventListener('gestureend', function(e) {
+                e.preventDefault();
+            }, { passive: false });
+
+            // 禁止长按弹出菜单（Android）
+            document.addEventListener('contextmenu', function(e) {
+                if (e.pointerType === 'touch' || window.innerWidth <= 768) {
+                    e.preventDefault();
                 }
             });
 
-            function handleInput() {
-                if (gameState !== GAME_STATES.PLAYING) return;
-                // 下蹲状态检查
-                if (keys['s'] || keys['arrowdown'] || keys['KeyS'] || keys['ArrowDown']) {
-                    if (!isJumping && !isCrouching) { isCrouching = true; playSound('crouch'); }
+            // 禁止文本选择（移动端双击选择）
+            document.addEventListener('selectstart', function(e) {
+                if (window.innerWidth <= 768) {
+                    e.preventDefault();
                 }
+            });
+
+            // ==================== 【移动端适配·BUG修复①】移动端触摸游戏控制（仅Canvas） ====================
+            let touchStartX = 0, touchStartY = 0, touchActive = false;
+            let touchLaneCooldown = 0;
+
+            // 判断触摸目标是否为可交互按钮/控件
+            function isInteractiveElement(target) {
+                return !!(target.closest('button') || target.closest('.btn') ||
+                    target.closest('.inv-item') || target.closest('.char-preset') ||
+                    target.closest('input') || target.closest('label') ||
+                    target.closest('.btn-buy') || target.closest('.btn-close-panel') ||
+                    target.closest('.shop-item button') || target.closest('.panel-content'));
             }
+
+            // 仅将游戏滑动手势注册在Canvas上，绝不触发startGame
+            const gameCanvas = renderer.domElement;
+            gameCanvas.addEventListener('touchstart', function(e) {
+                // 如果触摸目标是UI层上的按钮，完全放行，不处理游戏输入
+                if (isInteractiveElement(e.target)) return;
+                e.preventDefault();
+                initAudio();
+                // ★ 关键修复：绝不在Canvas触摸时触发startGame，只有首页按钮可触发
+                if (gameState === GAME_STATES.MENU) return;
+                if (gameState !== GAME_STATES.PLAYING) return;
+                if (e.touches.length === 1) {
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                    touchActive = true;
+                }
+            }, { passive: false });
+
+            gameCanvas.addEventListener('touchmove', function(e) {
+                if (isInteractiveElement(e.target)) return;
+                e.preventDefault();
+                if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
+                const dx = e.touches[0].clientX - touchStartX;
+                const dy = e.touches[0].clientY - touchStartY;
+                const absDx = Math.abs(dx), absDy = Math.abs(dy);
+                const threshold = 25;
+                if (absDx > absDy && absDx > threshold && touchLaneCooldown <= 0) {
+                    if (dx > 0 && currentLane > -1) { currentLane--; touchLaneCooldown = 0.12; }
+                    else if (dx < 0 && currentLane < 1) { currentLane++; touchLaneCooldown = 0.12; }
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                } else if (absDy > absDx && absDy > threshold) {
+                    if (dy < 0 && !isCrouching) {
+                        if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
+                        else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
+                    } else if (dy > 0 && !isJumping && !isCrouching) {
+                        isCrouching = true; playSound('crouch');
+                    }
+                    touchStartY = e.touches[0].clientY;
+                }
+            }, { passive: false });
+
+            gameCanvas.addEventListener('touchend', function(e) {
+                if (isInteractiveElement(e.target)) {
+                    touchActive = false;
+                    if (isCrouching && gameState === GAME_STATES.PLAYING) isCrouching = false;
+                    return;
+                }
+                e.preventDefault();
+                touchActive = false;
+                if (isCrouching && gameState === GAME_STATES.PLAYING) isCrouching = false;
+            }, { passive: false });
 
             // 触摸控制（移动端）
             let touchStartX = 0, touchStartY = 0, touchActive = false;
@@ -2906,71 +3003,17 @@
                     target.closest('.shop-item button'));
             }
 
-            function addTouchListeners(el) {
-                el.addEventListener('touchstart', (e) => {
-                    // 【移动端适配·BUG修复】按钮触摸优先级最高：检测到交互元素时
-                    // 不阻止默认行为、不触发startGame，让按钮自身click事件正常生效
-                    if (isInteractiveElement(e.target)) {
-                        return;
-                    }
+            // ==================== 【移动端适配·BUG修复①】按钮绑定（纯Touch，无Click） ====================
+            function bindButton(id, handler) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('touchstart', function(e) {
                     e.preventDefault();
+                    e.stopPropagation();
                     initAudio();
-                    // 【移动端适配】仅空白区域点击触发进入游戏
-                    if (gameState === GAME_STATES.MENU) { startGame(); return; }
-                    // 【移动端适配·BUG修复】结算/暂停状态下不捕获触摸坐标，防止逻辑冲突
-                    if (gameState !== GAME_STATES.PLAYING) return;
-                    if (e.touches.length === 1) {
-                        touchStartX = e.touches[0].clientX;
-                        touchStartY = e.touches[0].clientY;
-                        touchActive = true;
-                    }
-                }, { passive: false });
-
-                el.addEventListener('touchmove', (e) => {
-                    // 【移动端适配·BUG修复】触摸目标是按钮时放行，不阻止滚动/点击
-                    if (isInteractiveElement(e.target)) {
-                        return;
-                    }
-                    e.preventDefault();
-                    if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
-                    const dx = e.touches[0].clientX - touchStartX;
-                    const dy = e.touches[0].clientY - touchStartY;
-                    const absDx = Math.abs(dx), absDy = Math.abs(dy);
-                    const threshold = 30;
-                    // 优先判定水平/垂直
-                    if (absDx > absDy && absDx > threshold && touchLaneCooldown <= 0) {
-                        // 水平滑动切换轨道
-                        if (dx > 0 && currentLane > -1) { currentLane--; touchLaneCooldown = 0.15; }
-                        else if (dx < 0 && currentLane < 1) { currentLane++; touchLaneCooldown = 0.15; }
-                        touchStartX = e.touches[0].clientX;
-                        touchStartY = e.touches[0].clientY;
-                    } else if (absDy > absDx && absDy > threshold) {
-                        // 垂直滑动跳跃/下蹲
-                        if (dy < 0 && !isCrouching) {
-                            if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
-                            else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
-                        } else if (dy > 0 && !isJumping && !isCrouching) {
-                            isCrouching = true; playSound('crouch');
-                        }
-                        touchStartY = e.touches[0].clientY;
-                    }
-                }, { passive: false });
-
-                el.addEventListener('touchend', (e) => {
-                    // 【移动端适配·BUG修复】触摸目标是按钮时放行，保证按钮click事件正常触发
-                    if (isInteractiveElement(e.target)) {
-                        touchActive = false;
-                        if (isCrouching && gameState === GAME_STATES.PLAYING) { isCrouching = false; }
-                        return;
-                    }
-                    e.preventDefault();
-                    touchActive = false;
-                    if (isCrouching && gameState === GAME_STATES.PLAYING) { isCrouching = false; }
+                    handler(e);
                 }, { passive: false });
             }
-            // 【移动端适配】仅监听canvas和ui-layer，保证触摸事件覆盖全屏
-            addTouchListeners(renderer.domElement);
-            addTouchListeners(domUiLayer);
 
             // ==================== UI 按钮 ====================
             function togglePause() {
@@ -3011,22 +3054,7 @@
                 startBgMusic();
             }
 
-            // 【移动端适配】双向绑定函数：为按钮同时注册touchstart(移动端即时响应)+click(桌面端兼容)
-            function bindButton(id, handler) {
-                const el = document.getElementById(id);
-                if (!el) return;
-                let touchFired = false;
-                el.addEventListener('touchstart', (e) => {
-                    e.stopPropagation(); // 【移动端适配·BUG修复】阻止事件冒泡到ui-layer
-                    touchFired = true;
-                    handler(e);
-                }, { passive: true });
-                el.addEventListener('click', (e) => {
-                    if (touchFired) { touchFired = false; return; } // 移动端已处理，跳过click
-                    e.stopPropagation();
-                    handler(e);
-                });
-            }
+            // 【移动端适配·BUG修复①】所有按钮已通过bindButton注册（纯Touch，无Click）
 
             bindButton('btn-start', () => { startGame(); });
             bindButton('btn-pause', () => { initAudio(); togglePause(); });
@@ -3070,9 +3098,11 @@
                         <button class="btn-buy" data-id="${item.id}">购买</button>
                     </div>`;
                 }).join('');
-                // 【移动端适配】购买按钮绑定：touchstart优先 + click兼容
+                // 【移动端适配·BUG修复①】购买按钮：仅touchstart，阻止冒泡
                 container.querySelectorAll('.btn-buy').forEach(btn => {
-                    const buyHandler = () => {
+                    btn.addEventListener('touchstart', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
                         const item = SHOP_ITEMS.find(i => i.id === btn.dataset.id);
                         if (item && totalCoins >= item.cost) {
                             totalCoins -= item.cost;
@@ -3083,9 +3113,7 @@
                             updateInventoryPanel();
                             playSound('powerup');
                         }
-                    };
-                    btn.addEventListener('touchstart', (e) => { e.stopPropagation(); buyHandler(); }, { passive: true });
-                    btn.addEventListener('click', buyHandler);
+                    }, { passive: false });
                 });
             }
 
@@ -3098,14 +3126,14 @@
             bindButton('btn-close-shop', () => {
                 document.getElementById('shop-modal').classList.add('hidden');
             });
-            // 点击弹窗背景关闭（兼容触摸穿透）
+            // 【移动端适配·BUG修复①】弹窗背景触摸关闭（仅touchstart）
             const shopModal = document.getElementById('shop-modal');
-            shopModal.addEventListener('touchstart', (e) => {
-                if (e.target === e.currentTarget) shopModal.classList.add('hidden');
-            }, { passive: true });
-            shopModal.addEventListener('click', (e) => {
-                if (e.target === e.currentTarget) shopModal.classList.add('hidden');
-            });
+            shopModal.addEventListener('touchstart', function(e) {
+                if (e.target === e.currentTarget) {
+                    e.preventDefault();
+                    shopModal.classList.add('hidden');
+                }
+            }, { passive: false });
 
             // ==================== 角色定制系统 ====================
             function renderCharCustomizer() {
@@ -3115,8 +3143,10 @@
                         data-id="${p.id}" title="${p.name}">${p.icon}</div>`
                 ).join('');
                 container.querySelectorAll('.char-preset').forEach(el => {
-                    // 【移动端适配】角色预设：touchstart优先+click兼容
-                    const presetHandler = () => {
+                    // 【移动端适配·BUG修复①】角色预设：仅touchstart
+                    el.addEventListener('touchstart', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
                         selectedCharPreset = el.dataset.id;
                         const preset = CHAR_PRESETS.find(p => p.id === selectedCharPreset);
                         charConfig = { body: preset.body, hat: preset.hat, shoe: preset.shoe };
@@ -3126,9 +3156,7 @@
                         savePersistentData();
                         applyCharConfig();
                         renderCharCustomizer();
-                    };
-                    el.addEventListener('touchstart', (e) => { e.stopPropagation(); presetHandler(); }, { passive: true });
-                    el.addEventListener('click', presetHandler);
+                    }, { passive: false });
                 });
                 document.getElementById('char-body-color').value = charConfig.body;
                 document.getElementById('char-hat-color').value = charConfig.hat;
@@ -3145,12 +3173,12 @@
                 document.getElementById('char-modal').classList.add('hidden');
             });
             const charModal = document.getElementById('char-modal');
-            charModal.addEventListener('touchstart', (e) => {
-                if (e.target === e.currentTarget) charModal.classList.add('hidden');
-            }, { passive: true });
-            charModal.addEventListener('click', (e) => {
-                if (e.target === e.currentTarget) charModal.classList.add('hidden');
-            });
+            charModal.addEventListener('touchstart', function(e) {
+                if (e.target === e.currentTarget) {
+                    e.preventDefault();
+                    charModal.classList.add('hidden');
+                }
+            }, { passive: false });
             bindButton('btn-save-char', () => {
                 charConfig.body = document.getElementById('char-body-color').value;
                 charConfig.hat = document.getElementById('char-hat-color').value;
@@ -3194,10 +3222,14 @@
                         <span class="inv-count">${count}</span>
                     </div>`;
                 }).join('');
-                // 【移动端适配】道具使用：touchstart优先响应
+                // 【移动端适配·BUG修复①】道具使用：仅touchstart
                 container.querySelectorAll('.inv-item:not(.empty)').forEach(el => {
-                    el.addEventListener('touchstart', (e) => { e.stopPropagation(); useInventoryItem(el.dataset.type); }, { passive: true });
-                    el.addEventListener('click', () => { useInventoryItem(el.dataset.type); });
+                    el.addEventListener('touchstart', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        initAudio();
+                        useInventoryItem(el.dataset.type);
+                    }, { passive: false });
                 });
             }
 
@@ -3262,13 +3294,12 @@
             const _lookTarget = new THREE.Vector3();
 
             function update(deltaTime) {
+                // ★ BUG修复②：非PLAYING状态立即退出，不执行任何游戏逻辑
                 if (gameState !== GAME_STATES.PLAYING) return;
                 deltaTime = Math.min(deltaTime, 0.1);
                 gameTime += deltaTime;
                 // 触屏冷却
                 if (touchLaneCooldown > 0) touchLaneCooldown -= deltaTime;
-
-                handleInput();
 
                 // 快照保存（每1秒）
                 snapshotTimer += deltaTime;
@@ -3430,24 +3461,23 @@
                     }
                 }
 
-                // 碰撞检测（死亡动画中跳过）
-                if (!isDying) checkCollisions();
+                // ★ BUG修复②：死亡动画 — 仅播放倒地动画，跳过所有游戏逻辑
                 if (isDying) {
                     deathTimer -= deltaTime;
                     staggerTimer -= deltaTime;
-                    // 死亡动画：倒地旋转
                     playerGroup.rotation.z += (1.5 - playerGroup.rotation.z) * 0.15;
                     playerGroup.rotation.x += (-0.6 - playerGroup.rotation.x) * 0.15;
                     playerGroup.position.y += (-1.5 - playerGroup.position.y) * 0.1;
                     if (deathTimer <= 0) finishGameOver();
-                    return;
+                    return; // ★ 死亡动画期间不执行碰撞/警察/物品等任何游戏逻辑
                 }
+                // 碰撞检测
+                checkCollisions();
                 // 受击硬直恢复
                 if (isStaggered) {
                     staggerTimer -= deltaTime;
                     if (staggerTimer <= 0) { isStaggered = false; playerGroup.rotation.z = 0; }
                 }
-                if (gameState === GAME_STATES.GAMEOVER) return;
 
                 // 复活保护倒计时
                 if (reviveProtectionTimer > 0) reviveProtectionTimer -= deltaTime;
@@ -3616,10 +3646,9 @@
             }
 
             init();
-            console.log('🚇 3D地铁跑酷已就绪！');
-            console.log('🎮 键盘控制：A/D或←/→移动 | W/↑跳跃 | S/↓下蹲 | P暂停 | R重新开始');
-            console.log('📱 移动端：左半屏滑动切换轨道 | 右半屏上滑跳跃/下滑下蹲');
-            console.log('💡 提示：点击开始按钮以激活音频系统');
+            console.log('🚇 3D地铁跑酷（手机触控版）已就绪！');
+            console.log('📱 触控操作：左滑/右滑切换轨道 | 上滑跳跃 | 下滑下蹲');
+            console.log('👆 触摸按钮即可交互，无需等待');
         })();
     </script>
 </body>
