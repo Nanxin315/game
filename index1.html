@@ -850,6 +850,9 @@
                         // ★★★ 黑屏修复：容器从display:none变为display:block后，
                         //     强制同步重置画布尺寸+相机投影矩阵，否则canvas为0x0
                         resizeRenderer();
+                        // ★★★ 道具面板修复：game状态强制显示道具面板，
+                        //     解决startGame()中第二次showScreen('game')覆盖resetGame()显隐结果的问题
+                        updateInventoryPanel();
                         break;
                     case 'pause':
                         domGameContainer.classList.add('active');
