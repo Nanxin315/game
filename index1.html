@@ -93,10 +93,23 @@
             background: rgba(10, 10, 20, 0.85);
             z-index: 200;
             transition: opacity 0.3s;
+            /* ★ BUG修复A：确保菜单层自身可接收触摸事件 */
+            pointer-events: auto !important;
+            touch-action: manipulation;
         }
         #menu-screen.hidden {
             opacity: 0;
-            pointer-events: none;
+            pointer-events: none !important;
+        }
+        /* ★ BUG修复A/B：首页三个按钮提升到最高层级，确保无任何元素遮挡触摸 */
+        #menu-screen .btn,
+        #menu-screen .btn-sm {
+            position: relative;
+            z-index: 210 !important;
+            pointer-events: auto !important;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            /* 消除300ms延迟 */
         }
         #menu-screen .title {
             font-size: clamp(2.2rem, 5vw, 3.8rem);
@@ -140,6 +153,13 @@
         }
         .btn-play:active {
             transform: scale(0.95);
+        }
+        /* ★ BUG修复A：触摸按下视觉反馈（亮色光晕），确认touch事件正常触发 */
+        .btn-touch-press {
+            transform: scale(0.92) !important;
+            filter: brightness(1.4);
+            transition: transform 0.08s, filter 0.08s;
+            box-shadow: 0 0 24px rgba(255, 215, 0, 0.8) !important;
         }
         #menu-screen .controls-info {
             color: #aaa;
@@ -298,10 +318,29 @@
             justify-content: center;
             z-index: 300;
             transition: opacity 0.3s;
+            /* ★ BUG修复C：确保结算弹窗在最顶层，触摸事件不被任何元素拦截 */
+            pointer-events: auto !important;
+            touch-action: manipulation;
         }
         .overlay.hidden {
             opacity: 0;
             pointer-events: none !important;
+        }
+        /* ★ BUG修复C：结算弹窗内按钮确保高z-index可触摸 */
+        #gameover-overlay {
+            z-index: 500 !important;
+        }
+        #gameover-overlay .btn {
+            z-index: 501;
+            position: relative;
+            pointer-events: auto !important;
+            touch-action: manipulation;
+        }
+        #pause-overlay .btn {
+            z-index: 301;
+            position: relative;
+            pointer-events: auto !important;
+            touch-action: manipulation;
         }
         .overlay .big-text {
             font-size: clamp(2rem, 5vw, 3.5rem);
@@ -2990,29 +3029,31 @@
                 if (isCrouching && gameState === GAME_STATES.PLAYING) isCrouching = false;
             }, { passive: false });
 
-            // 触摸控制（移动端）
-            let touchStartX = 0, touchStartY = 0, touchActive = false;
-            let touchLaneCooldown = 0; // 防连触发
-
-            // 【移动端适配】判断触摸目标是否为可交互按钮/控件
-            function isInteractiveElement(target) {
-                return !!(target.closest('button') || target.closest('.btn') ||
-                    target.closest('.inv-item') || target.closest('.char-preset') ||
-                    target.closest('input') || target.closest('label') ||
-                    target.closest('.btn-buy') || target.closest('.btn-close-panel') ||
-                    target.closest('.shop-item button'));
-            }
-
             // ==================== 【移动端适配·BUG修复①】按钮绑定（纯Touch，无Click） ====================
+            // ★ 产生原因：此前代码重复声明let变量导致SyntaxError，整个脚本无法执行，所有按钮监听未注册。
+            // ★ 修复思路：移除重复声明后，重新正确绑定touchstart监听，区分按钮/背景两套事件体系，
+            //    按钮事件使用stopPropagation阻止冒泡到背景层，并添加触摸视觉反馈。
             function bindButton(id, handler) {
                 const el = document.getElementById(id);
                 if (!el) return;
+                // ★ touchstart：触摸瞬间触发功能 + 视觉反馈
                 el.addEventListener('touchstart', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
+                    e.preventDefault();       // 阻止浏览器默认行为（仅限此按钮）
+                    e.stopPropagation();      // ★ 阻止冒泡到背景层，防止触发背景逻辑
                     initAudio();
+                    // ★ 触摸视觉反馈：按下亮度+缩放
+                    el.classList.add('btn-touch-press');
+                    setTimeout(function() { el.classList.remove('btn-touch-press'); }, 120);
                     handler(e);
                 }, { passive: false });
+                // ★ touchend：移除视觉反馈
+                el.addEventListener('touchend', function(e) {
+                    el.classList.remove('btn-touch-press');
+                });
+                // ★ touchcancel：保险移除视觉反馈
+                el.addEventListener('touchcancel', function(e) {
+                    el.classList.remove('btn-touch-press');
+                });
             }
 
             // ==================== UI 按钮 ====================
