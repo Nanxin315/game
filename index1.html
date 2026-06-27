@@ -2633,7 +2633,16 @@
             }
 
             // ==================== 【移动端适配·BUG修复②】游戏结束流程重写 ====================
+            // ★ 产生原因：triggerGameOver()缺少状态守卫，可能在MENU/GAMEOVER状态下被意外触发，
+            //    导致首页点击"开始游戏"后错误弹出死亡结算界面。
+            // ★ 修复思路：增加严格状态检查——仅PLAYING状态允许触发死亡；增加开局保护期防止首帧误判。
+            let gameStartProtection = 0; // ★ 开局保护计时器（秒），防止首帧误触发死亡
+
             function triggerGameOver() {
+                // ★★★ 核心修复：仅PLAYING状态允许触发死亡，MENU/GAMEOVER/PAUSED状态下直接忽略
+                if (gameState !== GAME_STATES.PLAYING) return;
+                // ★ 开局保护：游戏开始后0.5秒内不允许死亡（防止初始化竞态）
+                if (gameStartProtection > 0) return;
                 if (isDying) return;
                 // ★ 立即终止所有游戏逻辑，防止主线程被游戏循环阻塞
                 isDying = true;
@@ -2657,9 +2666,12 @@
                 // 玩家倒地倾斜
                 playerGroup.rotation.z = 1.2;
                 playerGroup.rotation.x = -0.5;
+                console.log('💀 triggerGameOver：玩家死亡，0.8秒后显示结算界面');
             }
 
             function finishGameOver() {
+                // ★★★ 核心修复：防止重复调用（已处于GAMEOVER状态则跳过）
+                if (gameState === GAME_STATES.GAMEOVER) return;
                 // ★ 彻底终止游戏主循环逻辑（gameState变更后update()立即跳过）
                 gameState = GAME_STATES.GAMEOVER;
                 // 累计金币 + 最高分 + 最远距离
@@ -2715,6 +2727,7 @@
                 // 重置快照
                 gameSnapshots = []; snapshotTimer = 0;
                 reviveProtectionTimer = 0;
+                gameStartProtection = 0; // ★ 重置开局保护（重要：新对局开始时清零）
                 score = 0;
                 distance = 0;
                 speed = BASE_SPEED;
@@ -2826,6 +2839,8 @@
                 stopBgMusic();
                 if (bgMusicInterval) { clearInterval(bgMusicInterval); bgMusicInterval = null; }
                 gameState = GAME_STATES.MENU;
+                gameStartProtection = 0; // ★ 重置开局保护
+                gameSnapshots = []; snapshotTimer = 0; // ★ 清空快照
                 // 清理世界物品
                 for (const item of worldItems) {
                     scene.remove(item);
@@ -3072,8 +3087,16 @@
                 playSound('click');
             }
 
+            // ★★★ 核心修复：「开始游戏」按钮专用——全新对局初始化，与死亡复活逻辑完全隔离
+            // ★ 产生原因：此前缺少状态守卫，可能在非MENU状态下被调用导致逻辑混乱。
+            // ★ 修复思路：增加gameState前置校验（仅MENU状态可启动），设置开局保护期防止首帧误判死亡。
             function startGame() {
-                // 检查游戏次数
+                // ★ 状态守卫：仅首页MENU状态允许启动新游戏，防止重复调用或异常状态启动
+                if (gameState !== GAME_STATES.MENU) {
+                    console.log('⚠️ startGame被拒绝：当前状态=' + gameState + '，仅MENU状态可启动');
+                    return;
+                }
+                // 检查游戏次数（首页数值逻辑保持不变）
                 if (getTotalPlays() <= 0) {
                     alert('🔑 游戏次数不足！\n\n今日免费次数已用完，请前往商城购买钥匙（200金币/把）。');
                     return;
@@ -3081,8 +3104,13 @@
                 initAudio();
                 playSound('click');
                 consumePlay();
+                // ★ 完整重置游戏数据（resetGame内部会在末尾设置gameState=PLAYING）
                 resetGame();
+                // ★ 双重保险：确保gameState为PLAYING
                 gameState = GAME_STATES.PLAYING;
+                // ★ 设置开局保护期（0.5秒），防止首帧因初始化竞态误触发死亡
+                gameStartProtection = 0.5;
+                // 切换界面：隐藏首页，显示游戏HUD
                 domMenuScreen.classList.add('hidden');
                 domHud.classList.remove('hidden');
                 domPauseOverlay.classList.add('hidden');
@@ -3093,6 +3121,7 @@
                     police.position.set(0, 0, policeZ);
                 }
                 startBgMusic();
+                console.log('🎮 startGame：新游戏已启动，开局保护0.5秒');
             }
 
             // 【移动端适配·BUG修复①】所有按钮已通过bindButton注册（纯Touch，无Click）
@@ -3103,6 +3132,11 @@
             bindButton('btn-restart-pause', () => { initAudio(); playSound('click'); resetGame(); });
             bindButton('btn-menu-pause', () => { initAudio(); playSound('click'); returnToMenu(); });
             bindButton('btn-revive-go', function(e) {
+                // ★★★ 核心修复：复活仅允许在GAMEOVER状态下触发，首页/游戏中/暂停时完全禁用
+                if (gameState !== GAME_STATES.GAMEOVER) {
+                    console.log('⚠️ 复活被拒绝：当前状态=' + gameState + '，仅GAMEOVER状态可复活');
+                    return;
+                }
                 const btn = document.getElementById('btn-revive-go');
                 if (btn.disabled) return;
                 initAudio(); playSound('click');
@@ -3339,6 +3373,11 @@
                 if (gameState !== GAME_STATES.PLAYING) return;
                 deltaTime = Math.min(deltaTime, 0.1);
                 gameTime += deltaTime;
+                // ★ 开局保护倒计时（防止初始化竞态导致首帧误判死亡）
+                if (gameStartProtection > 0) {
+                    gameStartProtection -= deltaTime;
+                    if (gameStartProtection <= 0) gameStartProtection = 0;
+                }
                 // 触屏冷却
                 if (touchLaneCooldown > 0) touchLaneCooldown -= deltaTime;
 
