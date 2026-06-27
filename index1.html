@@ -46,17 +46,23 @@
             -ms-touch-action: manipulation;
         }
 
+        /* ========== 三大界面容器：独立分层，互不干扰 ========== */
+        /* ① 游戏画布层（最底层） */
         #game-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             z-index: 1;
             pointer-events: none;
+            /* 默认隐藏，仅game/over状态显示 */
+            display: none;
+        }
+        #game-container.active {
+            display: block;
         }
         #game-container canvas {
             pointer-events: auto;
+            display: block;
         }
 
         canvas {
@@ -64,52 +70,48 @@
             touch-action: none;
         }
 
-        /* UI 覆盖层 */
+        /* UI覆盖层：承载HUD、弹窗等浮层元素 */
         #ui-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             pointer-events: none;
             z-index: 100;
         }
-
-        #ui-layer>* {
+        #ui-layer > * {
             pointer-events: auto;
         }
 
-        /* 开始界面 */
+        /* ② 主界面（首页封面） — 最高层，仅home状态显示 */
         #menu-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: rgba(10, 10, 20, 0.85);
-            z-index: 200;
-            transition: opacity 0.3s;
-            /* ★ BUG修复A：确保菜单层自身可接收触摸事件 */
-            pointer-events: auto !important;
+            background: rgba(10, 10, 20, 0.88);
+            z-index: 500;
+            pointer-events: auto;
             touch-action: manipulation;
+            transition: opacity 0.25s;
         }
+        /* ★★★ 故障1修复：隐藏=完全消失(display:none)，非仅透明 */
         #menu-screen.hidden {
-            opacity: 0;
-            pointer-events: none !important;
+            display: none !important;
         }
-        /* ★ BUG修复A/B：首页三个按钮提升到最高层级，确保无任何元素遮挡触摸 */
+        /* ★★★ 故障3修复：按钮触摸热区扩大，z-index提升到最高 */
         #menu-screen .btn,
         #menu-screen .btn-sm {
             position: relative;
-            z-index: 210 !important;
+            z-index: 510 !important;
             pointer-events: auto !important;
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
-            /* 消除300ms延迟 */
+            /* 扩大触摸热区：最小48x48px满足手指触控 */
+            min-height: 48px;
+            min-width: 48px;
         }
         #menu-screen .title {
             font-size: clamp(2.2rem, 5vw, 3.8rem);
@@ -154,12 +156,12 @@
         .btn-play:active {
             transform: scale(0.95);
         }
-        /* ★ BUG修复A：触摸按下视觉反馈（亮色光晕），确认touch事件正常触发 */
+        /* ★★★ 故障3修复：触摸按下即时视觉反馈 */
         .btn-touch-press {
-            transform: scale(0.92) !important;
-            filter: brightness(1.4);
-            transition: transform 0.08s, filter 0.08s;
-            box-shadow: 0 0 24px rgba(255, 215, 0, 0.8) !important;
+            transform: scale(0.9);
+            filter: brightness(1.5);
+            transition: transform 0.06s, filter 0.06s;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.9);
         }
         #menu-screen .controls-info {
             color: #aaa;
@@ -175,22 +177,19 @@
             font-weight: 600;
         }
 
-        /* HUD */
+        /* HUD — 仅game状态可见 */
         #hud {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
+            position: fixed;
+            top: 0; left: 0; width: 100%;
             padding: clamp(8px, 1.5vh, 16px) clamp(12px, 3vw, 24px);
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            z-index: 50;
+            z-index: 150;
             pointer-events: none;
-            transition: opacity 0.3s;
         }
         #hud.hidden {
-            opacity: 0;
+            display: none !important;
         }
         #hud>* {
             pointer-events: auto;
@@ -304,43 +303,31 @@
             background: rgba(255, 255, 255, 0.2);
         }
 
-        /* 暂停 & 结束覆盖层 */
+        /* ③ 暂停&结束覆盖层 — 仅对应状态可见 */
         .overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.75);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            z-index: 300;
-            transition: opacity 0.3s;
-            /* ★ BUG修复C：确保结算弹窗在最顶层，触摸事件不被任何元素拦截 */
-            pointer-events: auto !important;
+            z-index: 600;
+            pointer-events: auto;
             touch-action: manipulation;
         }
+        /* ★★★ 故障1修复：隐藏=完全消失(display:none) */
         .overlay.hidden {
-            opacity: 0;
-            pointer-events: none !important;
+            display: none !important;
         }
-        /* ★ BUG修复C：结算弹窗内按钮确保高z-index可触摸 */
-        #gameover-overlay {
-            z-index: 500 !important;
-        }
-        #gameover-overlay .btn {
-            z-index: 501;
+        /* 结算&暂停弹窗内按钮 */
+        .overlay .btn {
+            z-index: 601;
             position: relative;
-            pointer-events: auto !important;
+            pointer-events: auto;
             touch-action: manipulation;
-        }
-        #pause-overlay .btn {
-            z-index: 301;
-            position: relative;
-            pointer-events: auto !important;
-            touch-action: manipulation;
+            min-height: 48px;
+            min-width: 48px;
         }
         .overlay .big-text {
             font-size: clamp(2rem, 5vw, 3.5rem);
@@ -445,9 +432,9 @@
             }
         }
 
-        /* 移动端底部提示 */
+        /* 移动端底部提示 — 仅game状态可见 */
         #mobile-hint {
-            position: absolute;
+            position: fixed;
             bottom: clamp(20px, 4vh, 40px);
             left: 50%;
             transform: translateX(-50%);
@@ -456,7 +443,9 @@
             text-align: center;
             pointer-events: none;
             z-index: 45;
-            transition: opacity 0.5s;
+        }
+        #mobile-hint.hidden {
+            display: none !important;
         }
         @media (min-width: 769px) {
             #mobile-hint {
@@ -514,16 +503,15 @@
 
         /* 面板弹窗（商城/角色） */
         .panel-modal {
-            position: absolute;
+            position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.82);
+            background: rgba(0,0,0,0.85);
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 400;
-            transition: opacity 0.3s;
+            z-index: 700;
         }
-        .panel-modal.hidden { opacity: 0; pointer-events: none !important; }
+        .panel-modal.hidden { display: none !important; }
         .panel-content {
             background: #1a1a30;
             border: 2px solid rgba(255,255,255,0.2);
@@ -834,8 +822,43 @@
     <script>
         (function() {
             // ==================== 全局状态 ====================
+            // ==================== ★★★ 三大界面统一状态管理（故障1修复核心） ====================
             const GAME_STATES = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', GAMEOVER: 'gameover' };
             let gameState = GAME_STATES.MENU;
+
+            // ★★★ 统一界面切换函数：同一时间仅一个界面激活
+            function showScreen(state) {
+                // 隐藏所有界面
+                domMenuScreen.classList.add('hidden');
+                domHud.classList.add('hidden');
+                domPauseOverlay.classList.add('hidden');
+                domGameoverOverlay.classList.add('hidden');
+                domBottomTimerBar.classList.add('hidden');
+                domMobileHint.classList.add('hidden');
+                domInvPanel.classList.add('hidden');
+                domGameContainer.classList.remove('active');
+
+                // 按状态激活对应界面
+                switch (state) {
+                    case 'home':
+                        domMenuScreen.classList.remove('hidden');
+                        break;
+                    case 'game':
+                        domGameContainer.classList.add('active');
+                        domHud.classList.remove('hidden');
+                        domMobileHint.classList.remove('hidden');
+                        break;
+                    case 'pause':
+                        domGameContainer.classList.add('active');
+                        domHud.classList.remove('hidden');
+                        domPauseOverlay.classList.remove('hidden');
+                        break;
+                    case 'over':
+                        domGameContainer.classList.add('active');
+                        domGameoverOverlay.classList.remove('hidden');
+                        break;
+                }
+            }
             let score = 0;
             let highScore = parseInt(localStorage.getItem('subwayHighScore') || '0');
             let distance = 0;
@@ -887,6 +910,7 @@
             const isMobileDevice = window.innerWidth <= 768;
             const WORLD_ITEM_CAP = isMobileDevice ? 45 : 60;
             const PARTICLE_CAP = isMobileDevice ? 18 : 25;
+            const domGameContainer = document.getElementById('game-container');
             const domHud = document.getElementById('hud');
             const domHudScore = document.getElementById('hud-score');
             const domHudDistance = document.getElementById('hud-distance');
@@ -2620,9 +2644,7 @@
                 jetCoinTimer = 0;
                 // 恢复游戏
                 gameState = GAME_STATES.PLAYING;
-                domGameoverOverlay.classList.add('hidden');
-                domHud.classList.remove('hidden');
-                domBottomTimerBar.classList.add('hidden');
+                showScreen('game');
                 updateMenuStats();
                 updateInventoryPanel();
                 updateHUD();
@@ -2703,9 +2725,6 @@
                     const reason = totalPlays < 2 ? '次数不足' : '游戏时长不足';
                     reviveBtn.textContent = '🔑 消耗2次游戏次数复活（' + reason + '）';
                 }
-                // ★ 确保结算弹窗在最顶层且可交互
-                domGameoverOverlay.style.zIndex = '500';
-                domGameoverOverlay.classList.remove('hidden');
                 domGoScore.textContent = '💰 得分：' + score;
                 domGoDistance.textContent = '📏 距离：' + Math.floor(distance) + 'm';
                 const recordEl = domGoRecord;
@@ -2715,9 +2734,8 @@
                 } else {
                     recordEl.classList.add('hidden');
                 }
-                domHud.classList.add('hidden');
-                domPauseOverlay.classList.add('hidden');
-                domBottomTimerBar.classList.add('hidden');
+                // ★★★ 故障1修复：使用统一showScreen切换界面
+                showScreen('over');
             }
 
             function resetGame() {
@@ -2812,15 +2830,9 @@
                 updateHUD();
                 domPowerupSlots.innerHTML = '';
                 domHudCombo.textContent = '';
-                // ★ BUG修复②：确保所有覆盖层正确隐藏
-                domGameoverOverlay.style.zIndex = '300';
-                domGameoverOverlay.classList.add('hidden');
-                domPauseOverlay.classList.add('hidden');
-                domMenuScreen.classList.add('hidden');
-                domHud.classList.remove('hidden');
-                domMobileHint.style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
-                // ★ BUG修复②：先设置状态再启动音频
+                // ★★★ 故障1修复：使用统一showScreen切换界面
                 gameState = GAME_STATES.PLAYING;
+                showScreen('game');
                 updateInventoryPanel();
                 btThrottle = 0;
                 jetCoinTimer = 0;
@@ -2895,13 +2907,8 @@
                 skyTexture = createSkyTexture(0);
                 scene.background = skyTexture;
                 scene.fog = new THREE.Fog(0x1a2a3a, 25, 80);
-                // ★ BUG修复②：确保UI状态正确
-                domGameoverOverlay.style.zIndex = '300';
-                domMenuScreen.classList.remove('hidden');
-                domHud.classList.add('hidden');
-                domPauseOverlay.classList.add('hidden');
-                domGameoverOverlay.classList.add('hidden');
-                domBottomTimerBar.classList.add('hidden');
+                // ★★★ 故障1修复：使用统一showScreen切换界面
+                showScreen('home');
                 updateMenuStats();
                 updateBottomTimer();
                 updateHUD();
@@ -2945,45 +2952,27 @@
                 slotsEl.innerHTML = html;
             }
 
-            // ==================== 【移动端适配·BUG修复①】全局移动端事件防护 ====================
-            // 禁止页面滚动、双击缩放、长按菜单等浏览器默认行为
+            // ==================== ★★★ 全局移动端事件防护（故障2修复：仅拦截背景，放行按钮/画布） ====================
+            // 禁止页面滚动——但仅在触摸非交互元素时
             document.addEventListener('touchmove', function(e) {
                 if (!isInteractiveElement(e.target)) {
                     e.preventDefault();
                 }
             }, { passive: false });
 
-            document.addEventListener('gesturestart', function(e) {
-                e.preventDefault();
-            }, { passive: false });
+            // 禁止手势缩放
+            document.addEventListener('gesturestart', function(e) { e.preventDefault(); }, { passive: false });
+            document.addEventListener('gesturechange', function(e) { e.preventDefault(); }, { passive: false });
+            document.addEventListener('gestureend', function(e) { e.preventDefault(); }, { passive: false });
 
-            document.addEventListener('gesturechange', function(e) {
-                e.preventDefault();
-            }, { passive: false });
-
-            document.addEventListener('gestureend', function(e) {
-                e.preventDefault();
-            }, { passive: false });
-
-            // 禁止长按弹出菜单（Android）
+            // 禁止长按菜单（Android）
             document.addEventListener('contextmenu', function(e) {
                 if (e.pointerType === 'touch' || window.innerWidth <= 768) {
                     e.preventDefault();
                 }
             });
 
-            // 禁止文本选择（移动端双击选择）
-            document.addEventListener('selectstart', function(e) {
-                if (window.innerWidth <= 768) {
-                    e.preventDefault();
-                }
-            });
-
-            // ==================== 【移动端适配·BUG修复①】移动端触摸游戏控制（仅Canvas） ====================
-            let touchStartX = 0, touchStartY = 0, touchActive = false;
-            let touchLaneCooldown = 0;
-
-            // 判断触摸目标是否为可交互按钮/控件
+            // ==================== 判断触摸目标 ====================
             function isInteractiveElement(target) {
                 return !!(target.closest('button') || target.closest('.btn') ||
                     target.closest('.inv-item') || target.closest('.char-preset') ||
@@ -2992,44 +2981,56 @@
                     target.closest('.shop-item button') || target.closest('.panel-content'));
             }
 
-            // 仅将游戏滑动手势注册在Canvas上，绝不触发startGame
+            // ==================== ★★★ 故障2修复：游戏画布滑动操控（仅限canvas区域+PLAYING状态） ====================
+            let touchStartX = 0, touchStartY = 0, touchActive = false;
+            let touchLaneCooldown = 0;
+            let swipeHandled = false; // 防重复触发
+
             const gameCanvas = renderer.domElement;
             gameCanvas.addEventListener('touchstart', function(e) {
-                // 如果触摸目标是UI层上的按钮，完全放行，不处理游戏输入
+                // 放行UI按钮触摸
                 if (isInteractiveElement(e.target)) return;
+                // ★★★ 仅PLAYING状态处理游戏滑动
+                if (gameState !== GAME_STATES.PLAYING) return;
                 e.preventDefault();
                 initAudio();
-                // ★ 关键修复：绝不在Canvas触摸时触发startGame，只有首页按钮可触发
-                if (gameState === GAME_STATES.MENU) return;
-                if (gameState !== GAME_STATES.PLAYING) return;
                 if (e.touches.length === 1) {
                     touchStartX = e.touches[0].clientX;
                     touchStartY = e.touches[0].clientY;
                     touchActive = true;
+                    swipeHandled = false;
                 }
             }, { passive: false });
 
             gameCanvas.addEventListener('touchmove', function(e) {
                 if (isInteractiveElement(e.target)) return;
+                if (!touchActive || gameState !== GAME_STATES.PLAYING || swipeHandled) return;
                 e.preventDefault();
-                if (!touchActive || gameState !== GAME_STATES.PLAYING) return;
                 const dx = e.touches[0].clientX - touchStartX;
                 const dy = e.touches[0].clientY - touchStartY;
                 const absDx = Math.abs(dx), absDy = Math.abs(dy);
-                const threshold = 25;
+                const threshold = 20;
                 if (absDx > absDy && absDx > threshold && touchLaneCooldown <= 0) {
-                    if (dx > 0 && currentLane > -1) { currentLane--; touchLaneCooldown = 0.12; }
-                    else if (dx < 0 && currentLane < 1) { currentLane++; touchLaneCooldown = 0.12; }
+                    // ★ 左右滑动 = 切换轨道（绝不触发重置/复活）
+                    if (dx > 0 && currentLane > -1) { currentLane--; touchLaneCooldown = 0.15; }
+                    else if (dx < 0 && currentLane < 1) { currentLane++; touchLaneCooldown = 0.15; }
                     touchStartX = e.touches[0].clientX;
                     touchStartY = e.touches[0].clientY;
+                    swipeHandled = true;
                 } else if (absDy > absDx && absDy > threshold) {
+                    // ★ 上下滑动 = 跳跃/下蹲（绝不触发重置/复活）
                     if (dy < 0 && !isCrouching) {
-                        if (!isJumping) { isJumping = true; verticalVelocity = 9.5; hasDoubleJumped = false; playSound('jump'); }
-                        else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) { verticalVelocity = 8; hasDoubleJumped = true; playSound('jump'); }
+                        if (!isJumping) {
+                            isJumping = true; verticalVelocity = 9.5;
+                            hasDoubleJumped = false; playSound('jump');
+                        } else if (doubleJumpAvailable && !hasDoubleJumped && verticalVelocity < 2) {
+                            verticalVelocity = 8; hasDoubleJumped = true; playSound('jump');
+                        }
                     } else if (dy > 0 && !isJumping && !isCrouching) {
                         isCrouching = true; playSound('crouch');
                     }
                     touchStartY = e.touches[0].clientY;
+                    swipeHandled = true;
                 }
             }, { passive: false });
 
@@ -3041,31 +3042,35 @@
                 }
                 e.preventDefault();
                 touchActive = false;
+                swipeHandled = false;
                 if (isCrouching && gameState === GAME_STATES.PLAYING) isCrouching = false;
             }, { passive: false });
 
-            // ==================== 【移动端适配·BUG修复①】按钮绑定（纯Touch，无Click） ====================
-            // ★ 产生原因：此前代码重复声明let变量导致SyntaxError，整个脚本无法执行，所有按钮监听未注册。
-            // ★ 修复思路：移除重复声明后，重新正确绑定touchstart监听，区分按钮/背景两套事件体系，
-            //    按钮事件使用stopPropagation阻止冒泡到背景层，并添加触摸视觉反馈。
+            // ==================== ★★★ 故障3修复：按钮绑定（纯Touch + 防抖 + 即时视觉反馈） ====================
+            const btnDebounceMap = new Map(); // 按钮防抖Map
+
             function bindButton(id, handler) {
                 const el = document.getElementById(id);
                 if (!el) return;
-                // ★ touchstart：触摸瞬间触发功能 + 视觉反馈
+                // touchstart：单次触摸立即响应（消除300ms延迟）
                 el.addEventListener('touchstart', function(e) {
-                    e.preventDefault();       // 阻止浏览器默认行为（仅限此按钮）
-                    e.stopPropagation();      // ★ 阻止冒泡到背景层，防止触发背景逻辑
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // ★ 防抖：同一按钮250ms内不重复触发
+                    const now = Date.now();
+                    const last = btnDebounceMap.get(id) || 0;
+                    if (now - last < 250) return;
+                    btnDebounceMap.set(id, now);
                     initAudio();
-                    // ★ 触摸视觉反馈：按下亮度+缩放
+                    // 即时视觉反馈
                     el.classList.add('btn-touch-press');
-                    setTimeout(function() { el.classList.remove('btn-touch-press'); }, 120);
+                    setTimeout(function() { el.classList.remove('btn-touch-press'); }, 150);
                     handler(e);
                 }, { passive: false });
-                // ★ touchend：移除视觉反馈
+                // touchend：移除视觉反馈
                 el.addEventListener('touchend', function(e) {
                     el.classList.remove('btn-touch-press');
                 });
-                // ★ touchcancel：保险移除视觉反馈
                 el.addEventListener('touchcancel', function(e) {
                     el.classList.remove('btn-touch-press');
                 });
@@ -3075,28 +3080,19 @@
             function togglePause() {
                 if (gameState === GAME_STATES.PLAYING) {
                     gameState = GAME_STATES.PAUSED;
-                    domPauseOverlay.classList.remove('hidden');
-                    domHud.classList.add('hidden');
+                    showScreen('pause');
                     stopBgMusic();
                 } else if (gameState === GAME_STATES.PAUSED) {
                     gameState = GAME_STATES.PLAYING;
-                    domPauseOverlay.classList.add('hidden');
-                    domHud.classList.remove('hidden');
+                    showScreen('game');
                     startBgMusic();
                 }
                 playSound('click');
             }
 
-            // ★★★ 核心修复：「开始游戏」按钮专用——全新对局初始化，与死亡复活逻辑完全隔离
-            // ★ 产生原因：此前缺少状态守卫，可能在非MENU状态下被调用导致逻辑混乱。
-            // ★ 修复思路：增加gameState前置校验（仅MENU状态可启动），设置开局保护期防止首帧误判死亡。
+            // ==================== ★★★ 「开始游戏」——仅MENU状态可用，与复活逻辑完全隔离 ====================
             function startGame() {
-                // ★ 状态守卫：仅首页MENU状态允许启动新游戏，防止重复调用或异常状态启动
-                if (gameState !== GAME_STATES.MENU) {
-                    console.log('⚠️ startGame被拒绝：当前状态=' + gameState + '，仅MENU状态可启动');
-                    return;
-                }
-                // 检查游戏次数（首页数值逻辑保持不变）
+                if (gameState !== GAME_STATES.MENU) return;
                 if (getTotalPlays() <= 0) {
                     alert('🔑 游戏次数不足！\n\n今日免费次数已用完，请前往商城购买钥匙（200金币/把）。');
                     return;
@@ -3104,24 +3100,17 @@
                 initAudio();
                 playSound('click');
                 consumePlay();
-                // ★ 完整重置游戏数据（resetGame内部会在末尾设置gameState=PLAYING）
                 resetGame();
-                // ★ 双重保险：确保gameState为PLAYING
                 gameState = GAME_STATES.PLAYING;
-                // ★ 设置开局保护期（0.5秒），防止首帧因初始化竞态误触发死亡
-                gameStartProtection = 0.5;
-                // 切换界面：隐藏首页，显示游戏HUD
-                domMenuScreen.classList.add('hidden');
-                domHud.classList.remove('hidden');
-                domPauseOverlay.classList.add('hidden');
-                domGameoverOverlay.classList.add('hidden');
+                gameStartProtection = 0.5; // 开局保护
+                // ★★★ 故障1修复：使用统一showScreen切换界面
+                showScreen('game');
                 ensureTrackSegments(0);
                 if (!police) {
                     police = createPolice();
                     police.position.set(0, 0, policeZ);
                 }
                 startBgMusic();
-                console.log('🎮 startGame：新游戏已启动，开局保护0.5秒');
             }
 
             // 【移动端适配·BUG修复①】所有按钮已通过bindButton注册（纯Touch，无Click）
@@ -3286,6 +3275,7 @@
                 const panel = domInvPanel;
                 if (gameState !== GAME_STATES.PLAYING) { panel.classList.add('hidden'); return; }
                 panel.classList.remove('hidden');
+                panel.style.display = '';
                 const container = domInvItems;
                 // 过滤掉钥匙（钥匙仅用于复活，非战斗中道具）
                 const battleItems = SHOP_ITEMS.filter(item => item.id !== 'keys');
@@ -3689,11 +3679,9 @@
                 if (gameState === GAME_STATES.PLAYING) {
                     update(deltaTime);
                 } else if (gameState === GAME_STATES.PAUSED) {
-                    // 暂停：仅清理浮动文字，不更新逻辑
                     if (floatTexts.length > 0) updateFloatTexts();
                 }
-                // MENU状态不渲染（场景完全被菜单遮罩覆盖）
-
+                // ★★★ 故障1修复：仅非HOME状态渲染3D场景
                 if (gameState !== GAME_STATES.MENU) {
                     renderer.render(scene, camera);
                 }
@@ -3715,12 +3703,9 @@
                 if (isMobile) {
                     domMobileHint.textContent = '👆 左滑切换轨道 | 右半屏上滑跳跃 / 下滑下蹲';
                 }
-                // 确保初始状态
-                domMenuScreen.classList.remove('hidden');
-                domHud.classList.add('hidden');
-                domPauseOverlay.classList.add('hidden');
-                domGameoverOverlay.classList.add('hidden');
+                // ★★★ 故障1修复：使用统一showScreen初始化界面
                 gameState = GAME_STATES.MENU;
+                showScreen('home');
                 lastTime = performance.now();
                 requestAnimationFrame(animate);
             }
