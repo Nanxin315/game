@@ -847,15 +847,21 @@
                         domGameContainer.classList.add('active');
                         domHud.classList.remove('hidden');
                         domMobileHint.classList.remove('hidden');
+                        // ★★★ 黑屏修复：容器从display:none变为display:block后，
+                        //     强制同步重置画布尺寸+相机投影矩阵，否则canvas为0x0
+                        resizeRenderer();
                         break;
                     case 'pause':
                         domGameContainer.classList.add('active');
                         domHud.classList.remove('hidden');
                         domPauseOverlay.classList.remove('hidden');
+                        resizeRenderer();
                         break;
                     case 'over':
                         domGameContainer.classList.add('active');
                         domGameoverOverlay.classList.remove('hidden');
+                        // ★★★ 黑屏修复：结算界面也需更新画布尺寸
+                        resizeRenderer();
                         break;
                 }
             }
@@ -1035,11 +1041,15 @@
             // ==================== Three.js 初始化 ====================
             const container = document.getElementById('game-container');
             const scene = new THREE.Scene();
-            const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.3, 200);
+            // ★★★ 黑屏修复：初始时容器display:none导致clientWidth/Height=0，
+            //     使用window尺寸作为后备，防止camera.aspect=NaN
+            const initW = container.clientWidth || window.innerWidth;
+            const initH = container.clientHeight || window.innerHeight;
+            const camera = new THREE.PerspectiveCamera(60, initW / Math.max(initH, 1), 0.3, 200);
             camera.position.set(0, 3.5, -8);
 
             const renderer = new THREE.WebGLRenderer({ antialias: !isMobileDevice, alpha: false, powerPreference: "high-performance" });
-            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setSize(initW, initH);
             // 移动端降级像素比，减轻GPU填充率压力
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.0 : 1.5));
             // 移动端关闭阴影大幅提升帧率；桌面端使用低分辨率阴影
@@ -1050,6 +1060,16 @@
             // 关闭色调映射，减少GPU后处理开销
             renderer.toneMapping = THREE.NoToneMapping;
             container.appendChild(renderer.domElement);
+
+            // ★★★ 黑屏修复：画布自适应函数——界面切换/窗口变化时调用
+            function resizeRenderer() {
+                const w = container.clientWidth || window.innerWidth;
+                const h = container.clientHeight || window.innerHeight;
+                if (w <= 0 || h <= 0) return; // 容器不可见时跳过
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            }
 
             // 灯光
             const ambientLight = new THREE.AmbientLight(0x334455, 1.8);
@@ -3341,14 +3361,12 @@
                 }
             }
 
-            // ==================== 窗口调整（防抖优化） ====================
+            // ==================== ★★★ 黑屏修复：窗口调整（防抖优化，复用resizeRenderer） ====================
             let resizeTimeout;
             window.addEventListener('resize', () => {
                 if (resizeTimeout) clearTimeout(resizeTimeout);
                 resizeTimeout = setTimeout(() => {
-                    camera.aspect = container.clientWidth / container.clientHeight;
-                    camera.updateProjectionMatrix();
-                    renderer.setSize(container.clientWidth, container.clientHeight);
+                    resizeRenderer();
                     domMobileHint.style.opacity = window.innerWidth <= 768 ? '0.6' : '0.35';
                 }, 150);
             });
